@@ -1,5 +1,5 @@
 ---
-title: "Assignment 2"
+title: "Thompson_Sampling"
 author: "Tobi"
 date: "2024-10-03"
 output: pdf_document
