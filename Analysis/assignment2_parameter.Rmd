@@ -1,0 +1,126 @@
+---
+title: "Assignment 2"
+author: "Shinyoung"
+date: "2024-10-03"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+# Packes required for subsequent analysis. P_load ensures these will be installed and loaded. 
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse,
+               ggplot2,
+               devtools,
+               BiocManager,
+               contextual
+               )
+
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+```
+
+# Dataset
+```{r}
+# this version contains 80 arms (ZOZO)
+dfZozo_80 <- read.csv("zozo_Context_80items.csv") %>%
+  select(item_id, click)
+```
+
+
+#model
+```{r}
+# set the seed
+set.seed(0)
+alpha <- 1
+beta <- 10000
+  
+  # Create a dataframe with different alpha and beta per arm (if required)
+df_alpha_beta <- data.frame(arm = 1:80, alpha = alpha, beta = beta)
+  
+n_sample <- 1000
+  
+  # Sample n_sample observations from each arm's beta distribution
+df_sampled <- mapply(rbeta, n_sample, df_alpha_beta$alpha, df_alpha_beta$beta)
+  
+  # Select an arm based on Thompson Sampling (arm with the highest average reward)
+avg_from_sampled <- apply(df_sampled, 2, mean)
+chosen_arm <- which.max(avg_from_sampled)
+```
+
+
+```{r}
+
+# OfflineReplayEvaluatorBandit with current settings
+bandit_Zozo_80 <- OfflineReplayEvaluatorBandit$new(
+  formula = click ~ item_id,
+  data = dfZozo_80,
+  randomize = FALSE
+)
+  
+size_sim <- 10000
+n_sim <- 10
+  
+  # Thompson Sampling policy object
+TS <- ThompsonSamplingPolicy$new()
+  
+  # Create agent with the TS policy and bandit
+agent_TS_zozo_80 <- Agent$new(TS, bandit_Zozo_80)
+  
+  # Simulator object for running the simulations
+simulator <- Simulator$new(agent_TS_zozo_80, horizon = size_sim, do_parallel = TRUE, simulations = n_sim)
+  
+  # Run the simulation
+history_TS_zozo_80 <- simulator$run()
+  
+  # Gather results for the current parameter setting
+df_TS_zozo_80 <- history_TS_zozo_80$data %>%
+  select(t, sim, choice, reward, agent)
+```
+```{r}
+df_TS_zozo_80_max_t <- df_TS_zozo_80%>%
+  group_by(sim) %>% # group by per agent
+  summarize(max_t = max(t)) # get max t
+
+df_TS_zozo_80_max_t
+```
+
+
+#graphs
+```{r}
+# Max of observations. 
+# You may want to adjust this depending on the number of observations per simulation and the size of the dataset used
+max_obs <- 800
+
+# dataframe transformation
+df_history_agg <- df_TS_zozo_80 %>%
+  group_by(sim) %>%
+  mutate(cumulative_reward = cumsum(reward)) %>%
+  group_by(t) %>%
+  summarise(
+    avg_cumulative_reward = mean(cumulative_reward),
+    se_cumulative_reward = sd(cumulative_reward, na.rm = TRUE) / sqrt(n_sim)
+  ) %>%
+  mutate(
+    cumulative_reward_lower_CI = avg_cumulative_reward - 1.96 * se_cumulative_reward,
+    cumulative_reward_upper_CI = avg_cumulative_reward + 1.96 * se_cumulative_reward
+  ) %>%
+  filter(t <= max_obs)
+
+# TODO: Make the following two plots:
+# 1: A plot that compares the average cumulative rewards over time for 10 and 20 arms using the df_history_agg dataframe
+# 2: The plot as defined in (1) together with the 95\% confidence interval.
+legend <- c("Avg." = "orange", "95% CI" = "gray") # set legend
+
+
+ggplot(data=df_history_agg, aes(x=t, y=avg_cumulative_reward)) +
+  geom_line(size=1.5,aes(color="Avg.")) + # add line
+  geom_ribbon(aes(ymin=ifelse(cumulative_reward_lower_CI<0, 0,cumulative_reward_lower_CI), # add confidence interval
+                  ymax=cumulative_reward_upper_CI,
+                  color = "95% CI"), 
+              alpha=0.1) +
+  labs(x = 'Time', y='Cumulative Reward', color='Metric') + # add titles
+  scale_color_manual(values=legend) + # add legend
+  theme_bw() # set the theme
+
+```
