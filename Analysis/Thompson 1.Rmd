@@ -1,0 +1,388 @@
+---
+title: "Bernoulli Thompson Sampling 1"
+output: html_document
+date: "2024-10-02"
+---
+
+```{r setup, include=FALSE}
+
+# Packes required for subsequent analysis. P_load ensures these will be installed and loaded. 
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse,
+               ggplot2,
+               devtools,
+               BiocManager,
+               contextual
+               )
+
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+
+```
+
+#Dataset
+
+To manage the large dataset more efficiently, we grouped the data by arm and sampled 5% from each group. This approach reduces the computational load while preserving the representativeness of the original dataset. Additionally, we shuffled the sampled data to eliminate any potential ordering bias, because in the original dataset before any transformation the dataset is not ordered by item_id but when we group it, it becomes ordered.
+
+```{r}
+# this version contains 80 arms (ZOZO)
+set.seed(0)
+library(readr)
+dfZozo_80 <- read_csv("~/Downloads/zozo_Context_80items.csv.zip")%>%
+  select(item_id, click) %>%
+  group_by(item_id) %>%
+  sample_frac(0.04) %>%
+  ungroup()%>%          # Ungroup to remove the group structure
+  arrange(sample(n()))   # Randomly shuffle the rows
+
+
+```
+# Thompson Sampling: notation
+
+```{=tex}
+\begin{enumerate}
+  \item The reward $Q_t(a)$ for each arm follows a beta distribution. At the start, at $t = 0$, every arm is assumed to follow the same beta distribution with parameters $\alpha_0 = 1$ and $\beta_0 = 1$. This means we initially assume each arm has an equal probability of giving a reward. 
+  \item At each time $t$, the algorithm samples $n_{\mathrm{sample}}$ observations from each of the distributions. The arm which has the highest average reward according to the sample is the chosen arm. 
+  \item We then observe the reward $r_t$, and update the parameters of the distribution accordingly. 
+  \begin{itemize}
+    \item $\alpha_t = \alpha_{t-1} + r_t$
+    \item $\beta_t = \beta_{t-1} + 1 - r_t$
+  \end{itemize}
+\end{enumerate}
+```
+
+\textbf{Task 1: select from the dataframe below an arm according to the Thompson Sampling algorithm}. Per arm, the alpha and beta parameters have been given. Use $n_{\mathrm{sample}}=100$. 
+
+```{r}
+
+# set the seed
+set.seed(0)
+
+# arm index
+arm <- 1:80
+
+# alpha per arm
+alpha <- rep(1, length(arm))
+
+# beta per arm
+beta <- rep(1, length(arm))
+
+# dataframe with alpha, beta per arm
+df_alpha_beta <- data.frame(arm=arm,alpha = alpha, beta = beta)
+
+# number of samples to draw
+n_sample <- 100
+
+# create dataframe with sampled values
+df_sampled <- mapply(rbeta, n_sample, df_alpha_beta$alpha, df_alpha_beta$beta)
+
+# average per sample
+avg_from_sampled <- apply(df_sampled, 2, mean)
+
+
+# get the arm with the highest average
+chosen_arm <- which.max(avg_from_sampled)
+
+chosen_arm
+```
+
+
+
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+
+library(contextual)
+
+# set the seed
+set.seed(0)
+
+## OfflineReplayEvaluatorBandit: simulates a bandit based on provided data
+#
+# Arguments:
+#
+#   data: dataframe that contains variables with (1) the reward and (2) the arms
+#
+#   formula: should consist of variable names in the dataframe. General structure is: 
+#       reward variable name ~ arm variable name
+#
+#   randomize: whether or not the bandit should receive the data in random order,
+#              or as ordered in the dataframe.
+#
+
+# in our case, create a bandit for the data with 10 arms, 
+#   formula = click ~ item_id, 
+#   no randomization 
+
+bandit_Zozo_80 <- OfflineReplayEvaluatorBandit$new(formula = click ~ item_id,
+                                                   data = dfZozo_80,
+                                                   randomize = FALSE)
+
+# lets generate 10 simulations, each of size 67837
+size_sim <- 67837
+n_sim<- 10
+# here we define the Thompson Sampling policy object
+TS          <- ThompsonSamplingPolicy$new()
+
+# the contextual package works with 'agent' objects - which consist of a policy and a bandit
+agent_TS_zozo_80 <-  Agent$new(TS, # add policy
+                               bandit_Zozo_80) # add bandit
+
+
+## simulator: simulates a bandit + policy based on the provided data and parameters
+#
+# Arguments:
+#
+#   agent: the agent object, previously defined
+#
+#   horizon: how many observations from dataset used in the simulation
+#
+#   do_parallel: if TRUE, runs simulation in parallel
+#
+#   simulations: how many simulations?
+#
+
+simulator          <- Simulator$new(agent_TS_zozo_80, # set our agent
+                                      horizon= size_sim, # set the size of each simulation
+                                      do_parallel = TRUE, # run in parallel for speed
+                                      simulations = n_sim, # simulate it n_sim times
+                                  )
+  
+  
+# run the simulator object  
+history_TS_zozo_80            <- simulator$run()
+
+# gather results
+df_TS_zozo_80 <- history_TS_zozo_80$data %>%
+  select(t, sim, choice, reward, agent) 
+
+
+
+```
+
+Now that we have gathered the results, let's dive a little bit deeper into each component. First, the bandit object, *OfflineReplayEvaluatorBandit*. The idea behind this function is that it 'replays' the results of an algorithm/policy based on random data. Once an algorithm picks an arm, for instance arm 1, it takes the first observation of arm 1 in the dataset. If the algorithm again picks arm 1, it again samples the next observation from arm 1, etc.
+
+Let us calculate per simulation (1-10), the maximum number of observations.
+
+```{r}
+df_TS_zozo_80_max_t <- df_TS_zozo_80%>%
+  group_by(sim) %>% # group by per agent
+  summarize(max_t = max(t)) # get max t
+
+df_TS_zozo_80_max_t
+```
+The results show that the maximum number of rounds across 10 simulations varied between 435 and 490, with simulation 8 reaching the highest number of rounds (490) and simulation 5 the lowest (435). While most simulations fall within a narrow range, this variation suggests differences in exploration patterns, where some simulations explored more arms or took more actions before reaching the end of the dataset.
+
+In the dataframe *df_TS_zozo* we have gathered the results of the TS policy. This dataframe contains the following columns:
+
+```{=tex}
+\begin{itemize}
+\item \textbf{$t$}: the step at which a choice was made
+\item \textbf{sim}: the simulation for which we observe results
+\item \textbf{choice}: the choice made by the algorithm
+\item \textbf{reward}: the reward observed by the algorithm
+\item \textbf{agent}: column containing the name of the agent 
+\end{itemize}
+```
+
+\textbf{Task 3: using this dataframe, make a plot of the average cumulative rewards for all simulations, together with the 95\% confidence interval}.
+
+```{r}
+
+# Max of observations. Adjusted to the number of observations per simulation (min 831) and the size of the dataset used
+max_obs <- 650
+# dataframe transformation
+df_history_agg <- df_TS_zozo_80 %>%
+  group_by( sim) %>% # group by simulation
+  mutate(cumulative_reward = cumsum(reward))%>% # calculate, per sim, cumulative reward over time
+  group_by( t) %>% # group by time
+  summarise(avg_cumulative_reward = mean(cumulative_reward), # average cumulative reward
+            se_cumulative_reward = sd(cumulative_reward, na.rm=TRUE)/sqrt(n_sim)) %>% # SE + Confidence interval
+  mutate(cumulative_reward_lower_CI =avg_cumulative_reward - 1.96*se_cumulative_reward,
+         cumulative_reward_upper_CI =avg_cumulative_reward + 1.96*se_cumulative_reward)%>%
+  filter(t <=max_obs)
+
+
+# TODO: Make the following two plots:
+# 1: A plot that shows only the average cumulative rewards over time using the df_history_agg dataframe
+# 2: The plot as defined in (1) together with the 95\% confidence interval. 
+
+legend <- c("Avg." = "orange", "95% CI" = "gray") # set legend
+
+
+ggplot(data=df_history_agg, aes(x=t, y=avg_cumulative_reward)) +
+  geom_line(size=1.5,aes(color="Avg.")) + # add line
+  geom_ribbon(aes(ymin=ifelse(cumulative_reward_lower_CI<0, 0,cumulative_reward_lower_CI), # add confidence interval
+                  ymax=cumulative_reward_upper_CI,
+                  color = "95% CI"), 
+              alpha=0.1) +
+  labs(x = 'Time', y='Average Cumulative Reward', color='Metric') + # add titles
+  scale_color_manual(values=legend) + # add legend
+  theme_bw() # set the theme
+
+results <- data.frame(Round = numeric(), ChosenArm = numeric(), Reward = numeric()) # initialize results dataframe
+
+for (i in 1:n_distinct(df_TS_zozo_80$sim)) { # ensure sim count is correct
+  current_sim <- df_TS_zozo_80 %>% filter(sim == i)
+  
+  for (t in 1:nrow(current_sim)) {
+    item_id <- current_sim$choice[t]
+    click <- current_sim$reward[t]
+    
+    results <- rbind(results, data.frame(Round = t, ChosenArm = item_id, Reward = click))
+  }
+}
+
+# Plot for Thompson Sampling Arm Choices Over Time
+ggplot(results, aes(x = Round, y = as.factor(ChosenArm))) +
+  geom_point(aes(color = as.factor(Reward))) +
+  labs(x = "Round", y = "Chosen Arm", title = "Thompson Sampling Arm Choices Over Time") +
+  scale_color_manual(values = c("0" = "red", "1" = "green"), name = "Reward") +
+  scale_y_discrete(breaks = function(x) x[seq(1, length(x), by = 5)]) + # Show every 5th arm
+  theme_minimal() +
+  theme(axis.text.y = element_text(angle = 45, size = 6)) # Adjust y-axis label size and orientation
+
+```
+
+```{r}
+# Assume df is your dataset
+batch_size <- 1262
+n <- nrow(dfZozo_80) # Number of rows in your dataset
+
+# Create an empty list to store batches
+batches <- list()
+
+# Determine how many complete batches we can make
+div <- seq(batch_size, n, batch_size)
+
+# Loop to divide the dataset into batches of 43 items
+for(i in 1:length(div)) {
+    start_row <- (batch_size * (i-1)) + 1
+    end_row <- div[i]
+    batches[[i]] <- dfZozo_80[start_row:end_row, ]
+}
+
+```
+
+
+```{r}
+# Thompson Sampling policy
+TS <- ThompsonSamplingPolicy$new()
+
+# Create an empty list to store the history of each batch
+history_batches <- list()
+
+# Loop through each batch and update the model
+for (i in 1:length(batches)) {
+  
+  # Create bandit for each batch
+  bandit_batch <- OfflineReplayEvaluatorBandit$new(
+    formula = click ~ item_id,
+    data = batches[[i]],
+    randomize = FALSE
+  )
+  
+  # Create the agent with the Thompson Sampling policy and batch-specific bandit
+  agent_batch <- Agent$new(TS, bandit_batch)
+  
+  # Set up simulator for the batch
+  simulator <- Simulator$new(
+    agent_batch,
+    horizon = nrow(batches[[i]]), # Use the batch size for each simulation
+    do_parallel = TRUE,
+    simulations = n_sim
+  )
+  
+  # Run the simulation for the batch
+  history_batch <- simulator$run()
+  
+  # Store the result
+  history_batches[[i]] <- history_batch$data
+  
+  # Print batch progress
+  print(paste("Completed batch", i, "of", length(batches)))
+}
+
+# Combine all batch histories into a single dataframe
+df_TS_combined <- do.call(rbind, history_batches) %>%
+  select(t, sim, choice, reward, agent)
+
+# View the combined results
+head(df_TS_combined)
+```
+```{r}
+df_TS_zozo_combined_max_t <- df_TS_combined%>%
+  group_by(sim) %>% # group by per agent
+  summarize(max_t = max(t)) # get max t
+
+df_TS_zozo_combined_max_t
+```
+```{r}
+
+# Max of observations. Adjusted to the number of observations per simulation (min 831) and the size of the dataset used
+max_obs <- 20
+# dataframe transformation
+df_history_agg <- df_TS_combined %>%
+  group_by( sim) %>% # group by simulation
+  mutate(cumulative_reward = cumsum(reward))%>% # calculate, per sim, cumulative reward over time
+  group_by( t) %>% # group by time
+  summarise(avg_cumulative_reward = mean(cumulative_reward), # average cumulative reward
+            se_cumulative_reward = sd(cumulative_reward, na.rm=TRUE)/sqrt(n_sim)) %>% # SE + Confidence interval
+  mutate(cumulative_reward_lower_CI =avg_cumulative_reward - 1.96*se_cumulative_reward,
+         cumulative_reward_upper_CI =avg_cumulative_reward + 1.96*se_cumulative_reward)%>%
+  filter(t <=max_obs)
+
+
+# TODO: Make the following two plots:
+# 1: A plot that shows only the average cumulative rewards over time using the df_history_agg dataframe
+# 2: The plot as defined in (1) together with the 95\% confidence interval. 
+
+legend <- c("Avg." = "orange", "95% CI" = "gray") # set legend
+
+
+ggplot(data=df_history_agg, aes(x=t, y=avg_cumulative_reward)) +
+  geom_line(size=1.5,aes(color="Avg.")) + # add line
+  geom_ribbon(aes(ymin=ifelse(cumulative_reward_lower_CI<0, 0,cumulative_reward_lower_CI), # add confidence interval
+                  ymax=cumulative_reward_upper_CI,
+                  color = "95% CI"), 
+              alpha=0.1) +
+  labs(x = 'Time', y='Average Cumulative Reward', color='Metric') + # add titles
+  scale_color_manual(values=legend) + # add legend
+  theme_bw() # set the theme
+
+results <- data.frame(Round = numeric(), ChosenArm = numeric(), Reward = numeric()) # initialize results dataframe
+
+for (i in 1:n_distinct(df_TS_zozo_80$sim)) { # ensure sim count is correct
+  current_sim <- df_TS_zozo_80 %>% filter(sim == i)
+  
+  for (t in 1:nrow(current_sim)) {
+    item_id <- current_sim$choice[t]
+    click <- current_sim$reward[t]
+    
+    results <- rbind(results, data.frame(Round = t, ChosenArm = item_id, Reward = click))
+  }
+}
+
+# Plot for Thompson Sampling Arm Choices Over Time
+ggplot(results, aes(x = Round, y = as.factor(ChosenArm))) +
+  geom_point(aes(color = as.factor(Reward))) +
+  labs(x = "Round", y = "Chosen Arm", title = "Thompson Sampling Arm Choices Over Time") +
+  scale_color_manual(values = c("0" = "red", "1" = "green"), name = "Reward") +
+  scale_y_discrete(breaks = function(x) x[seq(1, length(x), by = 5)]) + # Show every 5th arm
+  theme_minimal() +
+  theme(axis.text.y = element_text(angle = 45, size = 6)) # Adjust y-axis label size and orientation
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
