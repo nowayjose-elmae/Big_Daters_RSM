@@ -21,7 +21,7 @@ knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
 
 #Dataset
 
-To manage the large dataset more efficiently, we grouped the data by arm and sampled 5% from each group. This approach reduces the computational load while preserving the representativeness of the original dataset. Additionally, we shuffled the sampled data to eliminate any potential ordering bias, because in the original dataset before any transformation the dataset is not ordered by item_id but when we group it, it becomes ordered.
+To manage the large dataset more efficiently, we grouped the data by arm and sampled 4% from each group. This approach reduces the computational load while preserving the representativeness of the original dataset. Additionally, we shuffled the sampled data to eliminate any potential ordering bias, because in the original dataset before any transformation the dataset is not ordered by item_id but when we group it, it becomes ordered.
 
 ```{r}
 # this version contains 80 arms (ZOZO)
@@ -116,8 +116,8 @@ bandit_Zozo_80 <- OfflineReplayEvaluatorBandit$new(formula = click ~ item_id,
                                                    data = dfZozo_80,
                                                    randomize = FALSE)
 
-# lets generate 10 simulations, each of size 67837
-size_sim <- 67837
+# lets generate 10 simulations, each of size 54266
+size_sim <- 54266
 n_sim<- 10
 # here we define the Thompson Sampling policy object
 TS          <- ThompsonSamplingPolicy$new()
@@ -242,10 +242,10 @@ ggplot(results, aes(x = Round, y = as.factor(ChosenArm))) +
 
 ```
 
+We started by generating batches with sizes that increase by 1262, beginning from 1262, and continuing until the maximum batch size reaches 54266. The number 1262 was chosen because it is a divisor of 54266, ensuring that we can increment the batch sizes evenly and consistently, maintaining equal-sized increments throughout the process.
 ```{r}
-# Assume df is your dataset
 batch_size <- 1262
-n <- nrow(dfZozo_80) # Number of rows in your dataset
+n <- nrow(dfZozo_80) 
 
 # Create an empty list to store batches
 batches <- list()
@@ -253,27 +253,27 @@ batches <- list()
 # Determine how many complete batches we can make
 div <- seq(batch_size, n, batch_size)
 
-# Loop to divide the dataset into batches of 43 items
+# Loop to divide the dataset into batches
 for(i in 1:length(div)) {
-    start_row <- (batch_size * (i-1)) + 1
-    end_row <- div[i]
-    batches[[i]] <- dfZozo_80[start_row:end_row, ]
+    start_row <- 1  # Always start at the beginning for cumulative batching
+    end_row <- div[i]  # End of the batch is increasing in each loop
+    batches[[i]] <- dfZozo_80[start_row:end_row, ]  # Subset each batch cumulatively
 }
 
 ```
 
-
 ```{r}
+set.seed(0)
 # Thompson Sampling policy
 TS <- ThompsonSamplingPolicy$new()
 
 # Create an empty list to store the history of each batch
 history_batches <- list()
 
-# Loop through each batch and update the model
+# Loop through each batch and update the model only after processing the entire batch
 for (i in 1:length(batches)) {
   
-  # Create bandit for each batch
+  # Create bandit for each batch without any internal updates
   bandit_batch <- OfflineReplayEvaluatorBandit$new(
     formula = click ~ item_id,
     data = batches[[i]],
@@ -283,7 +283,7 @@ for (i in 1:length(batches)) {
   # Create the agent with the Thompson Sampling policy and batch-specific bandit
   agent_batch <- Agent$new(TS, bandit_batch)
   
-  # Set up simulator for the batch
+  # Set up simulator for the batch without updating the policy inside the batch
   simulator <- Simulator$new(
     agent_batch,
     horizon = nrow(batches[[i]]), # Use the batch size for each simulation
@@ -294,31 +294,26 @@ for (i in 1:length(batches)) {
   # Run the simulation for the batch
   history_batch <- simulator$run()
   
-  # Store the result
-  history_batches[[i]] <- history_batch$data
+  # Get the results and add the batch number
+  history_batch_data <- history_batch$data
+  history_batch_data$batch_num <- i
   
+  # Store the result
+  history_batches[[i]] <- history_batch_data
+
   # Print batch progress
   print(paste("Completed batch", i, "of", length(batches)))
 }
 
-# Combine all batch histories into a single dataframe
-df_TS_combined <- do.call(rbind, history_batches) %>%
-  select(t, sim, choice, reward, agent)
 
-# View the combined results
-head(df_TS_combined)
 ```
-```{r}
-df_TS_zozo_combined_max_t <- df_TS_combined%>%
-  group_by(sim) %>% # group by per agent
-  summarize(max_t = max(t)) # get max t
 
-df_TS_zozo_combined_max_t
-```
+
+
 ```{r}
 
 # Max of observations. Adjusted to the number of observations per simulation (min 831) and the size of the dataset used
-max_obs <- 20
+max_obs <- 650
 # dataframe transformation
 df_history_agg <- df_TS_combined %>%
   group_by( sim) %>% # group by simulation
@@ -373,10 +368,95 @@ ggplot(results, aes(x = Round, y = as.factor(ChosenArm))) +
 ```
 
 
+#Supposedly this is the right version of batching
 
+```{r}
+# Function to split the dataset into batches based on batch size
+split_into_batches <- function(dfZozo_80, batch_size) {
+  n <- nrow(dfZozo_80)
+  num_batches <- ceiling(n / batch_size)  # Calculate the number of batches
+  batches <- list()
+  
+  for (i in 1:num_batches) {
+    start_row <- ((i - 1) * batch_size) + 1
+    end_row <- min(i * batch_size, n)
+    batches[[i]] <- dfZozo_80[start_row:end_row, ]
+  }
+  
+  return(batches)
+}
 
+# Define different batch sizes you want to test
+batch_sizes <- c (1262, 27133, 54266)  # Example of batch sizes to test
+results_list <- list()
 
+# Loop over each batch size and run the model
+for (batch_size in batch_sizes) {
+  
+  # Split the dataset into batches for the current batch size
+  batches <- split_into_batches(dfZozo_80, batch_size)
+  
+  # Empty list to store the history for each batch
+  history_batches <- list()
+  
+  for (i in 1:length(batches)) {
+    # Thompson Sampling policy
+    TS <- ThompsonSamplingPolicy$new()
+    
+    # Create bandit for the current batch
+    bandit_batch <- OfflineReplayEvaluatorBandit$new(
+      formula = click ~ item_id,
+      data = batches[[i]],
+      randomize = FALSE
+    )
+    
+    # Create the agent with the Thompson Sampling policy and batch-specific bandit
+    agent_batch <- Agent$new(TS, bandit_batch)
+    
+    # Set up simulator for the batch
+    simulator <- Simulator$new(
+      agent_batch,
+      horizon = nrow(batches[[i]]),  # Use the batch size for each simulation
+      do_parallel = TRUE,
+      simulations = n_sim
+    )
+    
+    # Run the simulation for the current batch
+    history_batch <- simulator$run()
+    
+    # Get the results and add the batch number
+    history_batch_data <- history_batch$data
+    history_batch_data$batch_num <- i
+    
+    # Store the result for this batch
+    history_batches[[i]] <- history_batch_data
+    
+    # Print batch progress
+    print(paste("Completed batch", i, "for batch size", batch_size))
+  }
+  
+  # Combine all batch histories into a single dataframe for the current batch size
+  df_TS_combined <- do.call(rbind, history_batches) %>%
+    select(t, sim, choice, reward, agent, batch_num)
+  
+  # Store results in a list with batch size as the key
+  results_list[[paste0("batch_size_", batch_size)]] <- df_TS_combined
+}
 
+# You can now access the results for each batch size by calling:
+# results_list[["batch_size_1262"]]
+# results_list[["batch_size_2524"]]
+# etc.
+
+# Track the maximum t (time) for each simulation for batch size 1262 as an example
+df_TS_zozo_combined_max_t <- results_list[["batch_size_1262"]] %>%
+  group_by(sim) %>%
+  summarize(max_t = max(t))
+
+# View the max time per simulation
+df_TS_zozo_combined_max_t
+
+```
 
 
 
