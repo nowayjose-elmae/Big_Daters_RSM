@@ -1,0 +1,515 @@
+---
+title: "with 20"
+output: html_document
+date: "2024-10-16"
+---
+
+# Introduction
+
+Decision-making problems, where an agent must choose the best action from several alternatives at each point in time, are widely encountered in practical applications, such as when companies decide how to structure their websites to encourage shopping behavior. These problems involve a trade-off between exploration and exploitation (Lai & Robbins, 1985; Auer et al., 2002). This trade-off is typically formulated as the multi-armed bandit problem, where each possible action, or arm, has an unknown reward probability distribution, and the agent aims to maximize cumulative rewards over time by selecting the optimal arm (Bouneffouf & Rish, 2019).
+
+In this assignment, we apply the MAB framework to a real-world dataset from Zozo, a high-traffic fashion website. Here, the arms correspond to different fashion items, and the rewards are based on user clicks on the advertisement banner. The goal is to determine which items are best to recommend and identify the most effective positions on the recommendation interface (left, center, or right) to maximize click-through rates (CTR).
+
+To achieve this, we will first describe and analyze the dataset. Then, we will test several MAB models, including Thompson Sampling, ε-greedy, and Upper Confidence Bound (UCB), to identify the best-performing items and banner positions for maximizing clicks. Additionally, we will perform a heterogeneity analysis to examine how different user segments impact the models’ performance, a batch analysis to assess how varying batch sizes affect outcomes, and a parameter analysis to improve the models.
+
+The dataset captures user interactions with recommended fashion items and includes variables such as timestamps of impressions, item IDs, positions on the interface, and click indicator. It also contains propensity scores, which represent the probability of an item being recommended in each position, along with several user-related features such as age and gender.
+
+
+```{r}
+# Packes required for subsequent analysis. P_load ensures these will be installed and loaded. 
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse,
+               ggplot2,
+               devtools,
+               BiocManager,
+               contextual
+               )
+
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+```
+
+```{r}
+# this version contains 20 arms (ZOZO)
+set.seed(0)
+library(readr)
+dfZozo_20 <- read_csv("~/Downloads/zozo_noContext_20items_tiny.csv")%>%
+  select(item_id, click, position, user_feature_0, user_feature_1,user_feature_2, user_feature_3)
+  
+
+
+```
+
+# Heterogeneity and Aggregation Analysis
+
+To perform a meaningful heterogeneity and aggregation analysis, our first step is to identify potential clusters within the dataset. This involves grouping the data based on various features and selecting the one that provides the most useful segmentation. Ideally, with a detailed description of the features, we could create more targeted segments, such as isolating middle-aged women . However, since we lack detailed information, we will focus on choosing the feature that best divides the population into meaningful subgroups.
+
+What we are looking for is a feature that on one hand does not create too many subgroups, which could dilute our analysis, and on the other hand ensures that each subgroup has a substantial portion of the sample. This will help us avoid insignificant results and ensure that our analysis captures meaningful differences across segments.
+
+```{r}
+dfZozo_20 %>%
+  group_by(user_feature_0) %>%
+  summarise(n())
+
+dfZozo_20 %>%
+  group_by(user_feature_1) %>%
+  summarise(n())
+
+dfZozo_20 %>%
+  group_by(user_feature_2) %>%
+  summarise(n())
+
+
+dfZozo_20 %>%
+  group_by(user_feature_3) %>%
+  summarise(n())
+```
+```{r}
+library(dplyr)
+
+# Assuming your dataset is named 'user_data'
+grouped_data <- dfZozo_20 %>%
+  group_by(user_feature_0, user_feature_1, user_feature_2, user_feature_3) %>%
+  summarize(count = n(), total_clicks = sum(click, na.rm = TRUE))%>%
+  ungroup()
+
+# Display the grouped data
+print(grouped_data)
+
+```
+```{r}
+# Filter the dataset where count and total_clicks are greater than 1
+grouped_data <- grouped_data %>%
+  filter(count > 300)
+
+print(grouped_data)
+
+```
+
+
+```{r}
+# Filter based on the exact feature combinations provided in the image
+
+# Process each segment based on user feature combinations
+# Segment 1
+dfZozo_seg0 <- dfZozo_20 %>%
+  filter(
+    user_feature_0 == "574464659df0fc5bac579eff2b1fff99" & 
+    user_feature_1 == "a05b66683c9a38a761122e14ef9a0f6c" & 
+    user_feature_2 == "3a845d98884c222862996aadd75584c5" & 
+    user_feature_3 == "397559c512c5db37e09011ba61bcc333"
+  ) 
+
+# Segment 2
+dfZozo_seg1 <- dfZozo_20 %>%
+  filter(
+    user_feature_0 == "81ce123cbb5bd8ce818f60fb3586bba5" & 
+    user_feature_1 == "03a5648a76832f83c859d46bc06cb64a" & 
+    user_feature_2 == "2723d2eb8bba04e0362098011fa3997b" & 
+    user_feature_3 == "9bde591ffaab8d54c457448e4dca6f53"
+  )
+
+# Segment 3
+dfZozo_seg2 <- dfZozo_20 %>%
+  filter(
+    user_feature_0 == "81ce123cbb5bd8ce818f60fb3586bba5" & 
+    user_feature_1 == "03a5648a76832f83c859d46bc06cb64a" & 
+    user_feature_2 == "2723d2eb8bba04e0362098011fa3997b" & 
+    user_feature_3 == "c39b0c7dd5d4eb9a18e7db6ba2f258f8"
+  )
+
+# Segment 9
+dfZozo_seg3 <- dfZozo_20 %>%
+  filter(
+    user_feature_0 == "81ce123cbb5bd8ce818f60fb3586bba5" & 
+    user_feature_1 == "03a5648a76832f83c859d46bc06cb64a" & 
+    user_feature_2 == "c2e4f76cdbabecd33b8c762aeef386b3" & 
+    user_feature_3 == "c39b0c7dd5d4eb9a18e7db6ba2f258f8"
+  )
+
+# Segment 10
+dfZozo_seg4 <- dfZozo_20 %>%
+  filter(
+    user_feature_0 == "81ce123cbb5bd8ce818f60fb3586bba5" & 
+    user_feature_1 == "03a5648a76832f83c859d46bc06cb64a" & 
+    user_feature_2 == "c2e4f76cdbabecd33b8c762aeef386b3" & 
+    user_feature_3 == "c39b0c7dd5d4eb9a18e7db6ba2f258f8"
+  )
+
+
+```
+
+
+```{r}
+# Add all 10 segments to the feature_0_datasets list
+feature_0_datasets <- list(
+  dfZozo_seg0, dfZozo_seg1, dfZozo_seg2, dfZozo_seg3, 
+  dfZozo_seg4
+)
+
+# Define a vector with dataset names for better result tracking
+dataset_names <- c(
+  "dfZozo_seg0", "dfZozo_seg1", "dfZozo_seg2", "dfZozo_seg3", 
+  "dfZozo_seg4"
+)
+
+
+# Parameters for the simulations
+size_sim <- 330
+n_sim <- 10
+
+# Store results for each dataset
+results_list <- list()
+
+# Loop through each feature dataset and run the TS simulation
+for (i in seq_along(feature_0_datasets)) {
+  # Create the bandit object for the current dataset
+  bandit <- OfflineReplayEvaluatorBandit$new(formula = click ~ item_id,
+                                             data = feature_0_datasets[[i]],
+                                             randomize = FALSE)
+  
+  # Define the Thompson Sampling policy
+  TS <- ThompsonSamplingPolicy$new()
+  
+  # Create the agent
+  agent <- Agent$new(TS, bandit)
+  
+  # Create the simulator
+  simulator <- Simulator$new(agent,
+                             horizon = size_sim,
+                             do_parallel = TRUE,
+                             simulations = n_sim)
+  
+  # Run the simulator
+  history <- simulator$run()
+  
+  # Gather the results and store them in the list
+  df_TS <- history$data %>%
+    select(t, sim, choice, reward, agent)
+  
+  # Add results to the list with the corresponding dataset name
+  results_list[[dataset_names[i]]] <- df_TS
+  
+  # Calculate the maximum number of observations per simulation
+  df_TS_max_t <- df_TS %>%
+    group_by(sim) %>%
+    summarize(max_t = max(t))
+  
+  # Print the maximum observations per simulation for this dataset
+  print(paste("Max observations for", dataset_names[i]))
+  print(df_TS_max_t)
+}
+```
+
+
+```{r}
+max_t <- 10
+# Prepare an empty dataframe to store the aggregated results
+df_history_all <- data.frame()
+
+# Loop through each dataset, calculate cumulative rewards, and append to the dataframe
+for (name in names(results_list)) {
+  df_history_agg <- results_list[[name]] %>%
+    group_by(sim) %>%
+    mutate(cumulative_reward = cumsum(reward)) %>% # calculate cumulative reward per sim
+    group_by(t) %>%
+    summarise(avg_cumulative_reward = mean(cumulative_reward),
+              se_cumulative_reward = sd(cumulative_reward, na.rm = TRUE) / sqrt(n_sim)) %>%
+    mutate(cumulative_reward_lower_CI = avg_cumulative_reward - 1.96 * se_cumulative_reward,
+           cumulative_reward_upper_CI = avg_cumulative_reward + 1.96 * se_cumulative_reward) %>%
+    filter(t <= max_t) %>%
+    mutate(dataset = name ) # Add dataset name to differentiate
+
+  # Combine with other datasets
+  df_history_all <- rbind(df_history_all, df_history_agg)
+}
+
+# Plotting the cumulative reward behavior across all datasets
+ggplot(df_history_all, aes(x = t, y = avg_cumulative_reward, color = dataset)) +
+  geom_line(size = 1.5) + # Add line for average cumulative reward
+  geom_ribbon(aes(ymin = pmax(cumulative_reward_lower_CI, 0), ymax = cumulative_reward_upper_CI, fill = dataset), alpha = 0.1) + # Add confidence interval ribbons
+  labs(x = 'Time', y = 'Average Cumulative Reward', color = 'Dataset', fill = 'Dataset') + # Labels and legends
+  theme_bw() + # Set theme
+  theme(legend.position = "bottom") # Position the legend at the bottom
+
+```
+# Batch Sensitivity Analysis
+# Batch Sensitivity Analysis with the Contextual Package
+
+Here we assess how different batch sizes affect a multi-armed bandit model's performance when applying the TS algorithm. Instead of updating the model after every single user interaction (which would be a batch size of 1), we can group several interactions together into "batches" and update the model after processing each batch. For each batch size, we simulate the relationship between item recommendations and user clicks, collect the results, and store them for comparison. 
+```{r}
+library(contextual)
+library(dplyr)
+
+# Set the seed for reproducibility
+set.seed(0)
+
+# Number of simulations
+n_sim <- 10
+size_sim <- 10000
+
+# Define different batch sizes you want to test
+batch_sizes <- c(1, 5, 10, 20, 50, 100)# Adjust as needed
+
+# Create an empty list to store results for each batch size
+results_list <- list()
+
+# Define the Thompson Sampling policy object
+TS <- ThompsonSamplingPolicy$new()
+
+# Loop over each batch size
+for (batch_size in batch_sizes) {
+  
+  # Create the bandit for the data with 80 arms, formula = click ~ item_id, no randomization
+  bandit_Zozo_20 <- OfflineReplayEvaluatorBandit$new(formula = click ~ item_id,
+                                                     data = dfZozo_20,
+                                                     randomize = FALSE)
+  
+  # Create the agent object with the TS policy and the bandit
+  agent_TS_zozo_20 <- Agent$new(TS, # add policy
+                                bandit_Zozo_20) # add bandit
+  
+  # Create the simulator with the current batch size
+  simulator <- Simulator$new(
+    agent_TS_zozo_20,          # Set the agent
+    horizon = size_sim,        # Set the size of each simulation
+    do_parallel = TRUE,        # Run in parallel for speed
+    simulations = n_sim,       # Simulate n_sim times
+    save_interval = batch_size # Set save_interval to update after each batch
+  )
+  
+  # Run the simulator and store the result for the current batch size
+  history_TS_zozo_20 <- simulator$run()
+  
+  # Gather results for the current batch size
+  df_TS_zozo_20 <- history_TS_zozo_20$data %>%
+    select(t, sim, choice, reward, agent)
+  
+  # Add the results to the list, using the batch size as the key
+  results_list[[paste0("batch_size_", batch_size)]] <- df_TS_zozo_20
+}
+```
+Once we have the maximum t for all simulations and depending on the batch size, we use the smallest maximum t across them to ensure uniformity when building our comparison.  Then we identify which batch has higher average cumulative rewards at each time step and generate confidence intervals to account for uncertainty. 
+
+```{r}
+
+# Create an empty list to store max_t for each batch size
+max_t_list <- list()
+
+# Loop over each batch size
+for (batch_size in batch_sizes) {
+  
+  # Assuming you have df_TS_zozo_20 available for each batch size:
+  # df_TS_zozo_20 should be filtered or selected before the loop
+  # for each batch_size accordingly.
+  
+  # Example: df_TS_zozo_20 is a placeholder for the current batch size dataframe
+  df_TS_zozo_20 <- results_list[[paste0("batch_size_", batch_size)]]
+  
+  # Now calculate max_t for each simulation
+df_TS_zozo_20_max_t <- df_TS_zozo_20 %>%
+  group_by(sim) %>%
+  summarise(max_t = max(t))
+  
+  # Store the max_t result in the max_t_list
+  max_t_list[[paste0("batch_size_", batch_size)]] <- df_TS_zozo_20_max_t
+}
+```
+
+```{r}
+# Create an empty dataframe to store cumulative reward data for all batch sizes
+df_cumulative_rewards <- data.frame()
+
+max_t <- 400
+
+# Loop over each batch size to calculate cumulative rewards and store them
+for (batch_size in batch_sizes) {
+  
+  df_TS_zozo_20 <- results_list[[paste0("batch_size_", batch_size)]]
+  
+  # Calculate cumulative rewards for each simulation
+  df_TS_zozo_20_agg <- df_TS_zozo_20 %>%
+    group_by(sim) %>%
+    mutate(cumulative_reward = cumsum(reward)) %>%
+    ungroup() %>%
+    group_by(t) %>%
+    summarise(avg_cumulative_reward = mean(cumulative_reward), 
+              se_cumulative_reward = sd(cumulative_reward, na.rm = TRUE) / sqrt(n_sim)) %>%
+    mutate(cumulative_reward_lower_CI = avg_cumulative_reward - 1.96 * se_cumulative_reward,
+           cumulative_reward_upper_CI = avg_cumulative_reward + 1.96 * se_cumulative_reward,
+           batch_size = batch_size) %>%
+    filter(t <= max_t)  # Filter by max_t
+  
+  # Add results to the cumulative rewards dataframe
+  df_cumulative_rewards <- bind_rows(df_cumulative_rewards, df_TS_zozo_20_agg)
+}
+
+# Plot average cumulative rewards for each batch size
+ggplot(df_cumulative_rewards, aes(x = t, y = avg_cumulative_reward, color = as.factor(batch_size))) +
+  geom_line(size = 1.2) +
+  labs(x = "Time", y = "Average Cumulative Reward", color = "Batch Size") +
+  theme_minimal() +
+  theme(legend.position = "right") +
+  ggtitle("Average Cumulative Rewards for Different Batch Sizes")
+
+# Optional: Add 95% Confidence Intervals to the plot
+ggplot(df_cumulative_rewards, aes(x = t, y = avg_cumulative_reward, color = as.factor(batch_size))) +
+  geom_line(size = 1.2) +
+  geom_ribbon(aes(ymin = cumulative_reward_lower_CI, ymax = cumulative_reward_upper_CI, fill = as.factor(batch_size)), alpha = 0.2) +
+  labs(x = "Time", y = "Average Cumulative Reward", color = "Batch Size", fill = "Batch Size") +
+  theme_minimal() +
+  theme(legend.position = "right") +
+  ggtitle("Average Cumulative Rewards with 95% CI for Different Batch Sizes")
+
+```
+# Batch Sensitivity Analysis without the Contextual Package
+```{r}
+set.seed(0)
+
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+
+# Create a list of clicks per item_id (arm)
+arm_rewards <- split(dfZozo_80$click, dfZozo_80$item_id)
+
+# Number of simulations
+n_simulations <- 10
+
+# Horizon
+n_rounds <- 10000
+
+# Batch sizes
+batch_sizes <- c(1, 5, 10, 20, 50, 100)
+
+# Initialize list to store results
+all_results <- list()
+
+for (sim in 1:n_simulations) {
+  cat("Simulation", sim, "\n")
+  
+  for (batch_size in batch_sizes) {
+    cat("  Batch size", batch_size, "\n")
+    
+    # Initialize variables
+    arms <- length(unique(dfZozo_80$item_id))  
+    successes <- rep(0, arms)
+    failures <- rep(0, arms)
+    pull_counts <- rep(0, arms)
+    results <- data.frame(Round = 1:n_rounds, ChosenArm = integer(n_rounds), Reward = integer(n_rounds))
+    
+    # Initialize batch variables
+    batch_rewards <- rep(0, batch_size)
+    batch_chosen_arms <- rep(0, batch_size)
+    batch_index <- 1
+    
+    for (round in 1:n_rounds) {
+      # PREDICT: Sample from the arms Beta distributions for each arm
+      beta_samples <- rbeta(arms, successes + 1, failures + 1)
+      
+      # ACT: Choose the arm with the highest sampled value
+      chosen_arm <- which.max(beta_samples)
+      
+      # ENVIRONMENT: Obtain reward from dfZozo_80 for the chosen arm
+      reward <- sample(arm_rewards[[as.character(chosen_arm)]], 1)
+      
+      # Store the chosen arm and reward
+      results$ChosenArm[round] <- chosen_arm
+      results$Reward[round] <- reward
+      
+      # Track number of pulls for the chosen arm
+      pull_counts[chosen_arm] <- pull_counts[chosen_arm] + 1
+      
+      # Store in batch
+      batch_rewards[batch_index] <- reward
+      batch_chosen_arms[batch_index] <- chosen_arm
+      batch_index <- batch_index + 1
+      
+      # When batch is full, update successes and failures
+      if (batch_index > batch_size) {
+        # Update successes and failures for the batch
+        for (i in 1:batch_size) {
+          arm <- batch_chosen_arms[i]
+          rew <- batch_rewards[i]
+          if (rew == 1) {
+            successes[arm] <- successes[arm] + 1
+          } else {
+            failures[arm] <- failures[arm] + 1
+          }
+        }
+        # Reset batch index
+        batch_index <- 1
+      }
+    } # end of rounds
+    
+    # Handle any remaining batch updates
+    if (batch_index > 1) {
+      for (i in 1:(batch_index - 1)) {
+        arm <- batch_chosen_arms[i]
+        rew <- batch_rewards[i]
+        if (rew == 1) {
+          successes[arm] <- successes[arm] + 1
+        } else {
+          failures[arm] <- failures[arm] + 1
+        }
+      }
+    }
+    
+    # Store results with additional columns for Simulation and BatchSize
+    results$Simulation <- sim
+    results$BatchSize <- batch_size
+    
+    # Append to all_results
+    all_results[[length(all_results) + 1]] <- results
+  } # end of batch sizes
+} # end of simulations
+
+# Combine all results into one data frame
+df_all_results <- bind_rows(all_results)
+
+# Calculate cumulative rewards
+df_cumulative_rewards <- df_all_results %>%
+  group_by(BatchSize, Simulation) %>%
+  arrange(Round) %>%
+  mutate(CumulativeReward = cumsum(Reward)) %>%
+  ungroup()
+
+# Number of simulations
+n_simulations <- length(unique(df_cumulative_rewards$Simulation))
+
+# Set maximum time (rounds) for plotting
+max_t <- 400  # Adjust as needed
+
+# Calculate average cumulative rewards and standard errors
+df_avg_cumulative_rewards <- df_cumulative_rewards %>%
+  filter(Round <= max_t) %>%  # Filter to max_t rounds
+  group_by(BatchSize, Round) %>%
+  summarise(
+    AvgCumulativeReward = mean(CumulativeReward),
+    SE_CumulativeReward = sd(CumulativeReward) / sqrt(n_simulations)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    LowerCI = AvgCumulativeReward - 1.96 * SE_CumulativeReward,
+    UpperCI = AvgCumulativeReward + 1.96 * SE_CumulativeReward
+  )
+
+# Plot average cumulative rewards for each batch size
+ggplot(df_avg_cumulative_rewards, aes(x = Round, y = AvgCumulativeReward, color = as.factor(BatchSize))) +
+  geom_line(size = 1.2) +
+  labs(x = "Round", y = "Average Cumulative Reward", color = "Batch Size") +
+  theme_minimal() +
+  theme(legend.position = "right") +
+  ggtitle("Average Cumulative Rewards for Different Batch Sizes")
+
+# Optional: Add 95% Confidence Intervals to the plot
+ggplot(df_avg_cumulative_rewards, aes(x = Round, y = AvgCumulativeReward, color = as.factor(BatchSize))) +
+  geom_line(size = 1.2) +
+  geom_ribbon(aes(ymin = LowerCI, ymax = UpperCI, fill = as.factor(BatchSize)), alpha = 0.2, color = NA) +
+  labs(x = "Round", y = "Average Cumulative Reward", color = "Batch Size", fill = "Batch Size") +
+  theme_minimal() +
+  theme(legend.position = "right") +
+  ggtitle("Average Cumulative Rewards with 95% CI for Different Batch Sizes")
+
+```
+
+´
