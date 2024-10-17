@@ -1,0 +1,957 @@
+---
+title: "BRUH PLEASE WORK"
+author: "Tobi"
+date: "2024-10-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Download Libraries
+
+```{r}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse,
+               ggplot2,
+               devtools,
+               BiocManager,
+               dplyr
+               )
+```
+
+# Download Dataset
+
+```{r}
+df <- read.csv("~/Downloads/zozo_noContext_20items_tiny.csv")
+
+# selects the two relevant columns from Yahoo dataset; arm shown to user and reward observed
+df_for_sim <- df %>% select(item_id, click)
+df_for_sim$index <- 1:nrow(df_for_sim)
+
+#Verify Number of Success 
+count <- sum(df$click == 1)
+```
+
+# UCB
+
+The Upper Confidence Bound presents an analysis in which the agent balances the tradeoff between *exploration* and *exploitation* based on the degree of curiosity represented by c. This is similar to the value of Alpha used in previous method representations. However, unlike other methods, when faced with uncertainty, the agent chooses an arm based on the optimistic higher bound around the mean estimate. In reality, this is the case of Tobi.
+
+Tobi (c= 0.1) has gone out shopping for outfits for a new Global Beats Halloween event. Tobi chooses a costume that satisfies his requirement and is not keen to look for alternatives as much. However, when faced with uncertainty, he chooses the option with the highest confidence bound around the mean average of a particular custome. He is a very positive person.
+
+It is important to remember that Tobi will perform this custome search in 10 different universes (n_sim), and will evaluate a clothing item in each of the universes 10,000 times (size_n). As data scientists of Zozo, the goal is for Tobi to click as many times as possible, and based on this suggest him a costume and position.
+
+When Tobi goes shopping, he is more interested in the *exploitation* than the *exploration* value. Hence, he was an C = 0.1. His though process in choosing the Upper Confidence Bound, as he is optimistic, is defined by the UCB2 policy with an alpha of 0.1.
+
+## One Agent
+
+```{r}
+# Initialize simulation parameters
+# Load necessary libraries
+df <- read.csv("~/Downloads/zozo_noContext_20items_tiny.csv")
+# Simulation parameters
+n_arms <- length(unique(df$item_id))  # Number of unique arms (items)
+n_simulations <- 1000  # Number of simulations (for a meaningful confidence interval)
+sim_size <- 1000  # Number of rounds per simulation
+
+# Create placeholders for the results of each simulation
+all_sim_results <- vector("list", n_simulations)
+
+# Get unique item_ids
+item_ids <- unique(df$item_id)
+
+# Store cumulative rewards across simulations
+ucb_cum_rewards_all <- matrix(0, nrow = sim_size, ncol = n_simulations)
+
+# Start simulations
+set.seed(123)  # For reproducibility
+
+for (sim in 1:n_simulations) {
+  # Initialize for each simulation
+  pull_counts <- rep(0, n_arms)  # Track how many times each arm has been pulled
+  total_rewards <- rep(0, n_arms)  # Total rewards for each arm
+  cum_rewards <- numeric(sim_size)  # Cumulative rewards for each round
+  
+  # Randomly sample sim_size rows from the dataset for the simulation
+  sampled_data <- df[sample(nrow(df), sim_size, replace = TRUE), ]
+  
+  # Map item_id in sampled data to arm index
+  arm_index <- match(sampled_data$item_id, item_ids)
+  
+  # Simulate for each round in the simulation
+  for (round in 1:sim_size) {
+    # Compute UCB values
+    ucb_values <- ifelse(pull_counts == 0, Inf, 0)
+    if (all(pull_counts > 0)) {
+      avg_reward <- total_rewards / pull_counts
+      exploration_value <- sqrt((2 * log(round)) / pull_counts)
+      ucb_values <- avg_reward + 0.1 * exploration_value  # Adjust exploration term with C = 0.1
+    }
+    
+    # Select the arm with the highest UCB value
+    chosen_arm <- which.max(ucb_values)
+    
+    # Get the reward from the sampled data (click column)
+    reward <- sampled_data$click[round]
+    
+    # Update total rewards and pull counts for the chosen arm
+    total_rewards[chosen_arm] <- total_rewards[chosen_arm] + reward
+    pull_counts[chosen_arm] <- pull_counts[chosen_arm] + 1
+    
+    # Calculate cumulative rewards
+    if (round == 1) {
+      cum_rewards[round] <- reward
+    } else {
+      cum_rewards[round] <- cum_rewards[round - 1] + reward
+    }
+  }
+  
+  # Store the cumulative rewards for this simulation
+  ucb_cum_rewards_all[, sim] <- cum_rewards
+}
+
+# Calculate the average and standard deviation of cumulative rewards across simulations
+ucb_avg_cum_rewards <- rowMeans(ucb_cum_rewards_all)
+ucb_std_cum_rewards <- apply(ucb_cum_rewards_all, 1, sd)
+
+# Calculate 95% confidence intervals
+lower_ci <- ucb_avg_cum_rewards - 1.96 * (ucb_std_cum_rewards / sqrt(n_simulations))
+upper_ci <- ucb_avg_cum_rewards + 1.96 * (ucb_std_cum_rewards / sqrt(n_simulations))
+
+# Prepare data for ggplot
+results_df <- data.frame(
+  time = 1:sim_size,
+  avg_cum_rewards = ucb_avg_cum_rewards,
+  lower_ci = lower_ci,
+  upper_ci = upper_ci
+)
+
+```
+
+```{r}
+# Create ggplot with 95% confidence intervals
+ggplot(results_df, aes(x = time, y = avg_cum_rewards)) +
+  geom_line(color = "blue", size = 1) +
+  geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), alpha = 0.2, fill = "blue") +
+  labs(title = "UCB Cumulative Rewards with 95% Confidence Interval",
+       x = "Time (Rounds)",
+       y = "Cumulative Reward") +
+  theme_minimal()
+```
+
+## Multiple Agents
+
+However, it is unrealistic to think that Tobi (C=0.1) will be the only person attending the Global Beats event. He calls a group of friends to join him in the costume search. He calls: Tayyip (C=0.25), Victoria (C=0.5), Shinyoung (C=0.75) and Catarina (C=1). Now the UCB has 5 different policies and it aims to identify which one of these agents performs better over time.
+
+### Code for Agents
+
+```{r}
+# Initialize simulation parameters
+n_arms <- length(unique(df$item_id))  # Number of unique arms (items)
+n_simulations <- 100  # Number of simulations
+sim_size <- 1000  # Number of rounds per simulation (size of each simulation)
+n_agents <- 5  # Number of agents
+
+# Create a list to store results for all agents
+all_agent_results <- vector("list", n_agents)
+
+# Define exploration parameters (C) for each agent
+agent_exploration_params <- c(0.1, 0.25, 0.5, 0.75, 1)  # Different C values for different agents
+
+# Get unique item_ids
+item_ids <- unique(df$item_id)
+
+# Start simulations for each agent
+set.seed(123)  # For reproducibility
+
+for (agent in 1:n_agents) {
+  # Placeholder for storing cumulative rewards for each simulation for this agent
+  agent_sim_results <- matrix(0, nrow = sim_size, ncol = n_simulations)
+
+  # Run simulations for this agent
+  C <- agent_exploration_params[agent]  # Set exploration parameter for this agent
+  
+  for (sim in 1:n_simulations) {
+    # Initialize for each simulation
+    pull_counts <- rep(0, n_arms)  # Track how many times each arm has been pulled
+    total_rewards <- rep(0, n_arms)  # Total rewards for each arm
+    cumulative_rewards <- numeric(sim_size)  # Track cumulative rewards for each round
+
+    # Randomly sample `sim_size` rows from the dataset for the simulation
+    sampled_data <- df[sample(nrow(df), sim_size, replace = TRUE), ]
+    
+    # Map item_id in sampled data to arm index
+    arm_index <- match(sampled_data$item_id, item_ids)
+    
+    # Simulate for each round in the simulation
+    for (round in 1:sim_size) {
+      # Compute UCB values
+      ucb_values <- ifelse(pull_counts == 0, Inf, 0)
+      if (all(pull_counts > 0)) {
+        avg_reward <- total_rewards / pull_counts
+        exploration_value <- sqrt((2 * log(round)) / pull_counts)
+        ucb_values <- avg_reward + C * exploration_value  # Adjust exploration term with C
+      }
+
+      # Select the arm with the highest UCB value
+      chosen_arm <- which.max(ucb_values)
+      
+      # Get the reward from the sampled data (click column)
+      reward <- sampled_data$click[round]
+
+      # Update total rewards and pull counts for the chosen arm
+      total_rewards[chosen_arm] <- total_rewards[chosen_arm] + reward
+      pull_counts[chosen_arm] <- pull_counts[chosen_arm] + 1
+
+      # Update cumulative reward
+      if (round == 1) {
+        cumulative_rewards[round] <- reward
+      } else {
+        cumulative_rewards[round] <- cumulative_rewards[round - 1] + reward
+      }
+    }
+
+    # Store cumulative rewards for this simulation
+    agent_sim_results[, sim] <- cumulative_rewards
+  }
+
+  # Store all simulation results (mean, standard deviation, confidence intervals)
+  all_agent_results[[agent]] <- data.frame(
+    time = 1:sim_size,
+    mean_cum_reward = rowMeans(agent_sim_results),
+    std_cum_reward = apply(agent_sim_results, 1, sd),
+    lower_ci = rowMeans(agent_sim_results) - 1.96 * apply(agent_sim_results, 1, sd) / sqrt(n_simulations),
+    upper_ci = rowMeans(agent_sim_results) + 1.96 * apply(agent_sim_results, 1, sd) / sqrt(n_simulations),
+    agent = paste("Agent", agent)
+  )
+}
+
+# Combine all agents' results into one dataframe
+combined_results <- do.call(rbind, all_agent_results)
+
+```
+
+### Comparison between Agents
+
+```{r}
+ggplot(combined_results, aes(x = time, y = mean_cum_reward, color = agent)) +
+  geom_line(size = 1) +
+  geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, fill = agent), alpha = 0.3, color = NA) +
+  labs(title = "Comparison of Agents' Average Cumulative Rewards with 95% Confidence Interval",
+       x = "Time (Rounds)",
+       y = "Average Cumulative Reward",
+       color = "Agent",
+       fill = "Agent") +
+  theme_minimal()
+```
+
+The results conclude that Victoria (C=0.5) seems to be the most reactive customer to the costume advertisements she is shown. Additionally, the UCB classifier varies in effectiveness along the agents. However, we directly assigned the degree of exploration to each agent. It performed the analysis assuming that each row is a different user. However, there can be the case in which the same user interacts with the website multiple times.
+
+In reality, each agent (user) has common characteristics or unique user features which models their behavior. The dataset provided from ZOZO stores assigns each user a unique set of four different features. This is particularly important when addressing the fact that some users access or interact with the website multiple times. The analysis of the agents performed above is executed under the assumption that every row is a different user. Which is not the case. Hence, it is important to group the interaction by user, meaning aggregating the dataset by different agents, and be able to assume how many times did an agent react or participated. This addresses the concept of Heterogeneity.
+
+## Heterogeniety
+
+In the dataset, there are a lot of users who access the ZOZO website but don't actually interact with it nor click in any of the adds. However, every agent has a set of four different unique features which characterize them. This set of different values for each unique feature, is given by the code below:
+
+```{r}
+
+# Identify the number of unique values and list them for each user feature column
+unique_user_features <- list(
+  user_feature_0 = unique(df$user_feature_0),
+  user_feature_1 = unique(df$user_feature_1),
+  user_feature_2 = unique(df$user_feature_2),
+  user_feature_3 = unique(df$user_feature_3)
+)
+
+# Display the number of unique values and their respective lists
+for (i in names(unique_user_features)) {
+  cat("\n", i, "- Number of unique values:", length(unique_user_features[[i]]), "\n")
+  print(unique_user_features[[i]])
+}
+
+
+```
+
+The results are represented by the table below:
+
+| Feature        | Unique Values |
+|----------------|---------------|
+| User_feature_0 | 4             |
+| User_feaure_1  | 6             |
+| User_feature_2 | 9             |
+| User_feature_3 | 8             |
+
+: The dataset includes a matrix combination of all of these features, providing a multiplicity amount of unique agent. Each agent has a unique combination of these four unique features. Hence, the reproduction of all possible agents are given by the following code:
+
+```{r}
+
+# Extract unique values for each user feature column
+user_feature_0 <- unique(df$user_feature_0)
+user_feature_1 <- unique(df$user_feature_1)
+user_feature_2 <- unique(df$user_feature_2)
+user_feature_3 <- unique(df$user_feature_3)
+
+# Create all possible combinations of the user features
+all_combinations <- expand.grid(
+  user_feature_0 = user_feature_0,
+  user_feature_1 = user_feature_1,
+  user_feature_2 = user_feature_2,
+  user_feature_3 = user_feature_3
+)
+
+# Label each combination as 'Agent (number)'
+all_combinations <- all_combinations %>%
+  mutate(Agent = paste0("Agent_", row_number()))
+
+# View the first few rows of the combinations with agent labels
+print(all_combinations)
+
+# Optionally, save the combinations to a CSV file
+write.csv(all_combinations, "agent_combinations.csv", row.names = FALSE)
+
+
+```
+
+Hence, there are 1728 different unique agents accessing the website. This means that the total amount of samples in the dataset, **XXX,XXX**, are produced by the behavior of these 1728 unique agents.
+
+However, not all of the agents interact the same. Some agents interact multiple times with the add, yet they never click. Other agents click multiple times. For the context and simplicity of this analysis, there will be a clear distinction between the "Active" agents (Those who have clicked at least once) and the "Passive" agents (Those who not clicked). The analysis will be focused towards the "Active Agents". It will suggest an item and position to users who the algorithm has feedback to learn from. These is identified with the code below, where the code filters out those agents who only access, yet never click the adds, the "Passive Agents" and keeps the "Active Agents" who click on the add at least one time.\
+
+```{r}
+
+# Step 1: Extract unique values for each user feature column
+user_feature_0 <- unique(df$user_feature_0)
+user_feature_1 <- unique(df$user_feature_1)
+user_feature_2 <- unique(df$user_feature_2)
+user_feature_3 <- unique(df$user_feature_3)
+
+# Step 2: Create all possible combinations of the user features (Agents)
+all_combinations <- expand.grid(
+  user_feature_0 = user_feature_0,
+  user_feature_1 = user_feature_1,
+  user_feature_2 = user_feature_2,
+  user_feature_3 = user_feature_3
+)
+
+# Label each combination as 'Agent (number)'
+all_combinations <- all_combinations %>%
+  mutate(Agent = paste0(row_number()))
+
+# Step 3: Merge agents with the original dataset based on the user features
+df_with_agents <- df %>%
+  left_join(all_combinations, by = c("user_feature_0", "user_feature_1", "user_feature_2", "user_feature_3"))
+
+# Step 4: Group by Agent and filter agents that have at least one click (reward)
+agents_with_clicks <- df_with_agents %>%
+  group_by(Agent) %>%
+  summarize(total_clicks = sum(click, na.rm = TRUE)) %>%
+  filter(total_clicks > 0)  # Keep only agents with at least one click
+
+# Step 5: Eliminate agents with no clicks and return the final dataset
+df_filtered_agents <- df_with_agents %>%
+  filter(Agent %in% agents_with_clicks$Agent)
+
+# Step 6: Sort the filtered dataset by Agent
+df_sorted_by_agent <- df_filtered_agents %>%
+  arrange(Agent)
+
+# Step 7: View the sorted dataset
+print(df_sorted_by_agent)
+
+# Optional: Save the sorted dataset to a new CSV file
+write.csv(df_sorted_by_agent, "sorted_agents_with_clicks.csv", row.names = FALSE)
+
+unique_agent_count <- n_distinct(df_filtered_agents$Agent)
+
+```
+
+The aforementioned results exemplify two things. The initial dataset is reduced to **4442** samples which represent the interactions of meaningful costumers. Additionally, it identifies that from the **1728** agents who accessed the website, only **8** agents actually interacted with the page in a meaningful way. This are the potential costumers that the MAB should target in a way that it suggests the right add and position for them.
+
+These **8** agents have a unique combination of four "unique features". However, these features can be re-coded into numeric values and its relationship can be plotted. For example, and two agents may have three equal user features, yet differing in the fourth one. These two users are more related than two agents that have not a single user feature in common. This is why it is important to identify the cosine-relation between the agents and be able to group them by common features, as they are all potential costumers.
+
+```{r}
+# Step 1: Load the CSV file
+agents_data <- read.csv("sorted_agents_with_clicks.csv", stringsAsFactors = FALSE)
+
+# Step 2: Define the range of columns to convert (for example, columns 2 to 5)
+columns_to_convert <- 6:10  # Adjust this range based on your dataset
+
+# Step 3: Function to label encode specific columns
+convert_to_numeric_labels <- function(df, cols) {
+  df[, cols] <- lapply(df[, cols], function(x) {
+    # Apply Label Encoding for non-numeric features
+    return(as.numeric(as.factor(x)))
+  })
+  return(df)
+}
+
+# Step 4: Apply the label encoding to the selected columns
+agents_data_encoded <- convert_to_numeric_labels(agents_data, columns_to_convert)
+
+# Step 5: View the transformed data
+print(agents_data_encoded)
+
+write.csv(agents_data_encoded, "agents_data_encoded.csv", row.names = FALSE)
+```
+
+```{r}
+# Step 1: Load the dataset
+agents_data <- read.csv("agents_data_encoded.csv")
+
+# Step 2: Select only the user_features columns (assuming they are named 'user_feature_0' to 'user_feature_n')
+# Assuming 'user_feature_0' is the first column and 'agent' is the last column
+user_features_columns <- agents_data[, which(names(agents_data) == "user_feature_0"):which(names(agents_data) == "Agent") - 1]
+
+# Step 3: Convert the selected columns into a matrix
+user_features_matrix <- as.matrix(user_features_columns)
+
+# Step 4: Normalize each row (agent's features) to unit length
+normalize <- function(m) m / sqrt(rowSums(m^2))  # Normalize each row by Euclidean norm
+user_features_normalized <- normalize(user_features_matrix)
+
+# Step 5: Compute cosine similarity (dot product of normalized vectors)
+cosine_similarity <- user_features_normalized %*% t(user_features_normalized)
+
+# Step 6: Print the cosine similarity matrix
+print(cosine_similarity)
+
+
+```
+
+Additionally, the behavior of each agent can be modelled based on their *exploration* and *exploitation.* The degree of exploration is the amount of total interactions (Rows) they had with the website. The degree of *exploitation* is measured by the amount of clicks (Total Rewards).
+
+Which agent had the most *exploration*:
+
+```{r}
+# Step 1: Load the dataset (if not already loaded)
+agents_data <- read.csv("agents_data_encoded.csv", stringsAsFactors = FALSE)
+
+# Step 2: Count the number of rows (explorations) per agent
+agent_exploration <- agents_data %>%
+  group_by(Agent) %>%
+  summarise(row_count = n()) %>%
+  arrange(desc(row_count))  # Sort by the number of rows
+
+# Step 3: Find the agent with the most exploration
+most_exploration_agent <- agent_exploration[1, "Agent"]
+
+# Step 4: Print the agent with the most exploration
+print(most_exploration_agent)
+```
+
+The behavior of each of the **8 agents** was modeled based on their *exploration* and *exploitation.* The total result of their behavior within the dataset is summarised with the table below:
+
+```{r}
+# Step 1: Load the dataset
+agents_data <- read.csv("agents_data_encoded.csv", stringsAsFactors = FALSE)
+
+# Step 2: Compute the sum of clicks and the row count per agent
+agent_stats <- agents_data %>%
+  group_by(Agent) %>%
+  summarise(
+    total_clicks = sum(click),  # Sum the clicks for each agent
+    row_count = n()             # Count the number of rows for each agent
+  ) %>%
+  arrange(desc(row_count), desc(total_clicks))  # Sort by row count, then by total clicks
+
+# Step 3: Print the ranked table
+print(agent_stats)
+
+# Alternatively, if you want to display it in a more formatted way
+library(knitr)
+kable(agent_stats, caption = "Agent Ranking by Rows (Exploration) and Total Clicks")
+
+```
+
+From the aforementioned table it can be seen how **Agent 486** has the largest exploration and exploitation value. Hence, it is the person with the highest cumulative reward. With relation to the other agents, one can classify them as
+
+# UCB and Epsilon
+
+Another group of Data Scientists called the Epsiloners hear of this party and choose to compete against the UCB'ers for the best machine learning algorithm for ZOZO. They have been training for this in **SECTION X.** They create an "Epsiloner Doppelganger" for each agent, simulating the same degreee of *curiosity*. For example, UCB Victoria (C=0.5) has an Epsiloner Dopperganger EP Victoria (E=0.5). They choose to model, in the same environment, the behavior of this doppelganger and observe which machine learning method yields the highest average cumulative frequency.
+
+```{r}
+
+# Load the dataset
+df <- read.csv("~/Downloads/zozo_noContext_20items_tiny.csv")
+
+# Function to simulate reward for a specific arm (using 'click' as reward in dataset)
+simulate_reward <- function(arm, data) {
+  reward <- data$click[data$item_id == arm]
+  sample(reward, 1)
+}
+
+# Parameters
+n_arms <- length(unique(df$item_id))  # Number of unique arms (items)
+
+# Function to run UCB and Epsilon-Greedy and compare their performances
+run_simulation <- function(n_simulations, sim_size, C_values, epsilon_values) {
+  
+  results <- data.frame()  # Initialize empty data frame to store results for all agents
+  
+  # Iterate over the agents (each with a different combination of C and epsilon)
+  for (agent in 1:length(C_values)) {
+    
+    C <- C_values[agent]  # Get the UCB exploration parameter for this agent
+    epsilon <- epsilon_values[agent]  # Get the epsilon for Epsilon-Greedy for this agent
+    
+    # Initialize matrices to store cumulative rewards for each policy
+    ucb_cum_rewards_all <- matrix(0, nrow = sim_size, ncol = n_simulations)
+    eg_cum_rewards_all <- matrix(0, nrow = sim_size, ncol = n_simulations)
+
+    # Run simulations
+    for (sim in 1:n_simulations) {
+
+      # Initialize UCB variables
+      ucb_pull_counts <- rep(0, n_arms)  # Track how many times each arm is selected (UCB)
+      ucb_total_rewards <- rep(0, n_arms)  # Track total rewards per arm (UCB)
+      ucb_cumulative_rewards <- numeric(sim_size)  # Cumulative rewards over time (UCB)
+
+      # Initialize Epsilon-Greedy variables
+      eg_pull_counts <- rep(0, n_arms)  # Track how many times each arm is selected (Epsilon-Greedy)
+      eg_total_rewards <- rep(0, n_arms)  # Track total rewards per arm (Epsilon-Greedy)
+      eg_cumulative_rewards <- numeric(sim_size)  # Cumulative rewards over time (Epsilon-Greedy)
+
+      for (round in 1:sim_size) {
+
+        #### UCB Algorithm ####
+        ucb_values <- ifelse(ucb_pull_counts == 0, Inf, 0)  # UCB for arms not yet pulled
+        if (all(ucb_pull_counts > 0)) {
+          ucb_avg_reward <- ucb_total_rewards / ucb_pull_counts
+          ucb_exploration_value <- sqrt((2 * log(round)) / ucb_pull_counts)
+          ucb_values <- ucb_avg_reward + C * ucb_exploration_value
+        }
+
+        chosen_ucb_arm <- which.max(ucb_values)
+        reward_ucb <- simulate_reward(chosen_ucb_arm, df)
+
+        ucb_total_rewards[chosen_ucb_arm] <- ucb_total_rewards[chosen_ucb_arm] + reward_ucb
+        ucb_pull_counts[chosen_ucb_arm] <- ucb_pull_counts[chosen_ucb_arm] + 1
+
+        if (round == 1) {
+          ucb_cumulative_rewards[round] <- reward_ucb
+        } else {
+          ucb_cumulative_rewards[round] <- ucb_cumulative_rewards[round - 1] + reward_ucb
+        }
+
+        #### Epsilon-Greedy Algorithm ####
+        if (runif(1) < epsilon) {
+          chosen_eg_arm <- sample(1:n_arms, 1)  # Random exploration
+        } else {
+          eg_avg_reward <- ifelse(eg_pull_counts == 0, 0, eg_total_rewards / eg_pull_counts)
+          chosen_eg_arm <- which.max(eg_avg_reward)  # Exploit the best-known arm
+        }
+
+        reward_eg <- simulate_reward(chosen_eg_arm, df)
+
+        eg_total_rewards[chosen_eg_arm] <- eg_total_rewards[chosen_eg_arm] + reward_eg
+        eg_pull_counts[chosen_eg_arm] <- eg_pull_counts[chosen_eg_arm] + 1
+
+        if (round == 1) {
+          eg_cumulative_rewards[round] <- reward_eg
+        } else {
+          eg_cumulative_rewards[round] <- eg_cumulative_rewards[round - 1] + reward_eg
+        }
+      }
+
+      # Store cumulative rewards for this simulation
+      ucb_cum_rewards_all[, sim] <- ucb_cumulative_rewards
+      eg_cum_rewards_all[, sim] <- eg_cumulative_rewards
+    }
+
+    # Compute the average and standard deviation of cumulative rewards across simulations
+    ucb_avg_cum_rewards <- rowMeans(ucb_cum_rewards_all)
+    eg_avg_cum_rewards <- rowMeans(eg_cum_rewards_all)
+    
+    ucb_std_cum_rewards <- apply(ucb_cum_rewards_all, 1, sd)
+    eg_std_cum_rewards <- apply(eg_cum_rewards_all, 1, sd)
+    
+    # Calculate 95% confidence intervals
+    ucb_lower_ci <- ucb_avg_cum_rewards - 1.96 * (ucb_std_cum_rewards / sqrt(n_simulations))
+    ucb_upper_ci <- ucb_avg_cum_rewards + 1.96 * (ucb_std_cum_rewards / sqrt(n_simulations))
+    
+    eg_lower_ci <- eg_avg_cum_rewards - 1.96 * (eg_std_cum_rewards / sqrt(n_simulations))
+    eg_upper_ci <- eg_avg_cum_rewards + 1.96 * (eg_std_cum_rewards / sqrt(n_simulations))
+    
+    # Prepare the data for ggplot (store UCB and Epsilon-Greedy results)
+    results <- rbind(results,
+                     data.frame(
+                       time = 1:sim_size,
+                       Policy = paste("UCB (C =", C, ")"),
+                       AverageCumulativeReward = ucb_avg_cum_rewards,
+                       LowerCI = ucb_lower_ci,
+                       UpperCI = ucb_upper_ci,
+                       Agent = paste("Agent", agent)
+                     ),
+                     data.frame(
+                       time = 1:sim_size,
+                       Policy = paste("Epsilon-Greedy (ε =", epsilon, ")"),
+                       AverageCumulativeReward = eg_avg_cum_rewards,
+                       LowerCI = eg_lower_ci,
+                       UpperCI = eg_upper_ci,
+                       Agent = paste("Agent", agent)
+                     )
+    )
+  }
+
+  # Return the results data frame
+  return(results)
+}
+
+# Simulation parameters
+n_simulations <- 100  # Number of simulations
+sim_size <- 1000  # Number of rounds per simulation
+
+# Define the values of C (UCB) and epsilon (Epsilon-Greedy) for 5 agents
+C_values <- c(0.1, 0.25, 0.5, 0.75, 1.0)
+epsilon_values <- c(0.1, 0.25, 0.5, 0.75, 1.0)
+
+# Run the simulation
+results <- run_simulation(n_simulations, sim_size, C_values, epsilon_values)
+
+
+```
+
+### Visualization of Analysis between the Epsiloners and the UCB'ers across agents
+
+```{r}
+# Create ggplot to compare UCB and Epsilon-Greedy policies for all agents
+ggplot(results, aes(x = time, y = AverageCumulativeReward, color = Policy, fill = Policy)) +
+  geom_line(size = 1) +
+  geom_ribbon(aes(ymin = LowerCI, ymax = UpperCI), alpha = 0.2) +
+  facet_wrap(~ Agent) +
+  labs(title = "Comparison of UCB and Epsilon-Greedy Policies (with 95% CI)",
+       x = "Time (Rounds)",
+       y = "Average Cumulative Reward",
+       color = "Policy") +
+  theme_minimal()
+```
+
+## Best Costume according to the UCB Policy
+
+Given that the UCB outperforms the Epsilon in average cumulative rewards over time. It can be used as a MAB method to suggest each of our Active Customers their best item and position. Firsly, it is important to identify which item is better for which agent, disregarding position. This is seen with the code below:
+
+```{r}
+# Step 1: Load the dataset
+agents_data <- read.csv("agents_data_encoded.csv", stringsAsFactors = FALSE)
+
+# Step 2: Initialize the required variables
+# Assuming the columns are: 'Agent' (users), 'item_id' (arms), 'click' (rewards)
+n_users <- length(unique(agents_data$Agent))
+n_items <- length(unique(agents_data$item_id))
+
+# Initialize matrices to store rewards (clicks) and trials (attempts)
+rewards <- matrix(0, nrow = n_users, ncol = n_items)  # Matrix to store total rewards per user-item
+trials <- matrix(0, nrow = n_users, ncol = n_items)   # Matrix to store the number of times each item was selected
+
+# Create a mapping from user and item to matrix indices
+user_map <- as.numeric(factor(agents_data$Agent))  # Convert Agent to numeric indices
+item_map <- as.numeric(factor(agents_data$item_id))  # Convert item_id to numeric indices
+
+# Step 3: Implement the UCB function
+ucb <- function(rewards, trials, t, c = 2) {
+  # UCB score: mean reward + exploration term
+  mean_rewards <- rewards / pmax(trials, 1)  # Avoid division by zero
+  exploration_term <- sqrt(c * log(t + 1) / pmax(trials, 1))  # Exploration factor
+  ucb_scores <- mean_rewards + exploration_term
+  return(ucb_scores)
+}
+
+# Step 4: Simulate UCB for each user-item interaction
+n_rounds <- 1000  # Number of UCB rounds
+
+for (t in 1:n_rounds) {
+  for (user in 1:n_users) {
+    # Calculate UCB scores for all items for the current user
+    ucb_scores <- ucb(rewards[user, ], trials[user, ], t)
+    
+    # Choose the item with the highest UCB score
+    chosen_item <- which.max(ucb_scores)
+    
+    # Simulate the click based on the actual data
+    user_data <- agents_data[agents_data$Agent == unique(agents_data$Agent)[user], ]
+    
+    # Find if the chosen item was clicked by the user
+    click_data <- user_data[user_data$item_id == unique(agents_data$item_id)[chosen_item], "click"]
+    
+    if (length(click_data) > 0) {
+      # If there is a click interaction, update rewards and trials
+      reward <- sum(click_data)  # Sum of all clicks for the user-item interaction
+      rewards[user, chosen_item] <- rewards[user, chosen_item] + reward
+      trials[user, chosen_item] <- trials[user, chosen_item] + 1
+    }
+  }
+}
+
+# Step 5: Identify the best item for each user
+best_item_for_user <- apply(rewards / pmax(trials, 1), 1, which.max)
+
+# Step 6: Display the results
+results <- data.frame(
+  Agent = unique(agents_data$Agent), 
+  Best_Item = unique(agents_data$item_id)[best_item_for_user]
+)
+print(results)
+
+```
+
+## Best position
+
+Secondly, regardless of the item, it is important to understand which position is better for which Active Customer. This is seen with the table below:
+
+```{r}
+# Step 1: Load the dataset
+agents_data <- read.csv("agents_data_encoded.csv", stringsAsFactors = FALSE)
+
+# Step 2: Initialize the required variables
+# Assuming the columns are: 'Agent' (users), 'position' (arm), 'click' (rewards)
+n_users <- length(unique(agents_data$Agent))
+n_positions <- length(unique(agents_data$position))  # Now treating 'position' as the arm (3 positions)
+
+# Initialize matrices to store rewards (clicks) and trials (attempts)
+rewards <- matrix(0, nrow = n_users, ncol = n_positions)  # Matrix to store total rewards per user-position
+trials <- matrix(0, nrow = n_users, ncol = n_positions)   # Matrix to store the number of times each position was selected
+
+# Create a mapping from user and position to matrix indices
+user_map <- as.numeric(factor(agents_data$Agent))  # Convert Agent to numeric indices
+position_map <- as.numeric(factor(agents_data$position))  # Convert position to numeric indices
+
+# Step 3: Implement the UCB function
+ucb <- function(rewards, trials, t, c = 2) {
+  # UCB score: mean reward + exploration term
+  mean_rewards <- rewards / pmax(trials, 1)  # Avoid division by zero
+  exploration_term <- sqrt(c * log(t + 1) / pmax(trials, 1))  # Exploration factor
+  ucb_scores <- mean_rewards + exploration_term
+  return(ucb_scores)
+}
+
+# Step 4: Simulate UCB for each user-position interaction
+n_rounds <- 1000  # Number of UCB rounds
+
+for (t in 1:n_rounds) {
+  for (user in 1:n_users) {
+    # Calculate UCB scores for all positions for the current user
+    ucb_scores <- ucb(rewards[user, ], trials[user, ], t)
+    
+    # Choose the position with the highest UCB score
+    chosen_position <- which.max(ucb_scores)
+    
+    # Simulate the click based on the actual data
+    user_data <- agents_data[agents_data$Agent == unique(agents_data$Agent)[user], ]
+    
+    # Find if the chosen position was clicked by the user
+    click_data <- user_data[user_data$position == unique(agents_data$position)[chosen_position], "click"]
+    
+    if (length(click_data) > 0) {
+      # If there is a click interaction, update rewards and trials
+      reward <- sum(click_data)  # Sum of all clicks for the user-position interaction
+      rewards[user, chosen_position] <- rewards[user, chosen_position] + reward
+      trials[user, chosen_position] <- trials[user, chosen_position] + 1
+    }
+  }
+}
+
+# Step 5: Identify the best position for each user
+best_position_for_user <- apply(rewards / pmax(trials, 1), 1, which.max)
+
+# Step 6: Display the results
+results <- data.frame(
+  Agent = unique(agents_data$Agent), 
+  Best_Position = unique(agents_data$position)[best_position_for_user]
+)
+print(results)
+
+```
+
+# Position Dilemma for the Advertisements
+
+In general, the analysis has identified which Item and which Position is better suggested for users. However, it disregards the possibility of a combination. Now each combiantion of item_id and position is regarded as a new arm.
+
+```{r}
+# Step 1: Load the dataset
+agents_data <- read.csv("agents_data_encoded.csv", stringsAsFactors = FALSE)
+
+# Step 2: Initialize variables
+# Assuming the columns are: 'Agent' (users), 'item_id', 'position', 'click' (reward)
+n_users <- length(unique(agents_data$Agent))
+n_items <- length(unique(agents_data$item_id))
+n_positions <- length(unique(agents_data$position))
+
+# Create all possible combinations of item_id and position
+item_position_combinations <- expand.grid(item_id = unique(agents_data$item_id), position = unique(agents_data$position))
+n_combinations <- nrow(item_position_combinations)
+
+# Initialize matrices to store rewards and trials
+rewards <- matrix(0, nrow = n_users, ncol = n_combinations)  # Rows = users, Columns = item-position combinations
+trials <- matrix(0, nrow = n_users, ncol = n_combinations)
+
+# Create a mapping from user, item_id, and position to matrix indices
+user_map <- as.numeric(factor(agents_data$Agent))  # Convert Agent to numeric indices
+
+# Function to map a specific item_id and position to its combination index
+get_combination_index <- function(item_id, position) {
+  which(item_position_combinations$item_id == item_id & item_position_combinations$position == position)
+}
+
+# Step 3: Implement the UCB function
+ucb <- function(rewards, trials, t, c = 2) {
+  # UCB score: mean reward + exploration term
+  mean_rewards <- rewards / pmax(trials, 1)  # Avoid division by zero
+  exploration_term <- sqrt(c * log(t + 1) / pmax(trials, 1))  # Exploration factor
+  ucb_scores <- mean_rewards + exploration_term
+  return(ucb_scores)
+}
+
+# Step 4: Simulate UCB for each user-item_position combination interaction
+n_rounds <- 1000  # Number of UCB rounds
+
+for (t in 1:n_rounds) {
+  for (user in 1:n_users) {
+    # Calculate UCB scores for all item-position combinations for the current user
+    ucb_scores <- ucb(rewards[user, ], trials[user, ], t)
+    
+    # Choose the combination with the highest UCB score
+    chosen_combination <- which.max(ucb_scores)
+    
+    # Simulate the click based on the actual data
+    user_data <- agents_data[agents_data$Agent == unique(agents_data$Agent)[user], ]
+    chosen_item <- item_position_combinations$item_id[chosen_combination]
+    chosen_position <- item_position_combinations$position[chosen_combination]
+    
+    # Find if the chosen item-position combination was clicked by the user
+    click_data <- user_data[user_data$item_id == chosen_item & user_data$position == chosen_position, "click"]
+    
+    if (length(click_data) > 0) {
+      # If there is a click interaction, update rewards and trials
+      reward <- sum(click_data)  # Sum of all clicks for the user-item-position combination
+      rewards[user, chosen_combination] <- rewards[user, chosen_combination] + reward
+      trials[user, chosen_combination] <- trials[user, chosen_combination] + 1
+    }
+  }
+}
+
+# Step 5: Identify the best item-position combination for each user
+best_combination_for_user <- apply(rewards / pmax(trials, 1), 1, which.max)
+
+# Step 6: Display the results
+best_item_position <- item_position_combinations[best_combination_for_user, ]
+results <- data.frame(Agent = unique(agents_data$Agent), Best_Item = best_item_position$item_id, Best_Position = best_item_position$position)
+
+print(results)
+
+```
+
+## Batching for UCB (Expensive Processing)
+
+```{r}
+# Step 1: Load the dataset
+agents_data <- read.csv("agents_data_encoded.csv", stringsAsFactors = FALSE)
+
+# Step 2: Initialize variables
+n_users <- length(unique(agents_data$Agent))
+n_items <- length(unique(agents_data$item_id))
+n_positions <- length(unique(agents_data$position))
+
+# Create all possible combinations of item_id and position
+item_position_combinations <- expand.grid(item_id = unique(agents_data$item_id), 
+                                           position = unique(agents_data$position))
+n_combinations <- nrow(item_position_combinations)
+
+# Initialize matrices to store rewards and trials for UCB and Thompson Sampling
+rewards_ucb <- matrix(0, nrow = n_users, ncol = n_combinations)
+trials_ucb <- matrix(0, nrow = n_users, ncol = n_combinations)
+rewards_thompson <- matrix(0, nrow = n_users, ncol = n_combinations)
+trials_thompson <- matrix(0, nrow = n_users, ncol = n_combinations)
+
+# Function to map a specific item_id and position to its combination index
+get_combination_index <- function(item_id, position) {
+  which(item_position_combinations$item_id == item_id & item_position_combinations$position == position)
+}
+
+# UCB function
+ucb <- function(rewards, trials, t, c = 2) {
+  mean_rewards <- rewards / pmax(trials, 1)
+  exploration_term <- sqrt(c * log(t + 1) / pmax(trials, 1))
+  ucb_scores <- mean_rewards + exploration_term
+  return(ucb_scores)
+}
+
+# Thompson Sampling function
+thompson_sampling <- function(successes, trials) {
+  sapply(1:length(successes), function(i) {
+    rbeta(1, successes[i] + 1, trials[i] - successes[i] + 1)
+  })
+}
+
+# Step 3: Define batch sizes and simulation parameters
+batch_sizes <- seq(10, 1000, by = 50)  # Batch sizes ranging from 1 to 1000, increment by 50
+n_rounds <- 1000  # Total rounds for simulation
+
+# Step 4: Run simulations for both algorithms
+results <- data.frame()
+
+for (batch_size in batch_sizes) {
+  ucb_total_rewards <- 0
+  thompson_total_rewards <- 0
+  
+  for (t in seq(1, n_rounds, by = batch_size)) {
+    # Collect batch interactions
+    for (b in 1:batch_size) {
+      for (user in 1:n_users) {
+        # UCB
+        ucb_scores <- ucb(rewards_ucb[user, ], trials_ucb[user, ], t)
+        chosen_ucb <- which.max(ucb_scores)
+        user_data <- agents_data[agents_data$Agent == unique(agents_data$Agent)[user], ]
+        chosen_item <- item_position_combinations$item_id[chosen_ucb]
+        chosen_position <- item_position_combinations$position[chosen_ucb]
+        click_data <- user_data[user_data$item_id == chosen_item & user_data$position == chosen_position, "click"]
+        
+        if (length(click_data) > 0) {
+          reward <- sum(click_data)
+          rewards_ucb[user, chosen_ucb] <- rewards_ucb[user, chosen_ucb] + reward
+          trials_ucb[user, chosen_ucb] <- trials_ucb[user, chosen_ucb] + 1
+          ucb_total_rewards <- ucb_total_rewards + reward
+        }
+
+        # Thompson Sampling
+        thompson_probs <- thompson_sampling(rewards_thompson[user, ], trials_thompson[user, ])
+        chosen_thompson <- which.max(thompson_probs)
+        chosen_item <- item_position_combinations$item_id[chosen_thompson]
+        chosen_position <- item_position_combinations$position[chosen_thompson]
+        click_data <- user_data[user_data$item_id == chosen_item & user_data$position == chosen_position, "click"]
+        
+        if (length(click_data) > 0) {
+          reward <- sum(click_data)
+          rewards_thompson[user, chosen_thompson] <- rewards_thompson[user, chosen_thompson] + reward
+          trials_thompson[user, chosen_thompson] <- trials_thompson[user, chosen_thompson] + 1
+          thompson_total_rewards <- thompson_total_rewards + reward
+        }
+      }
+    }
+  }
+  
+  # Calculate average rewards per batch size
+  avg_ucb_reward <- ucb_total_rewards / (n_rounds / batch_size)
+  avg_thompson_reward <- thompson_total_rewards / (n_rounds / batch_size)
+  
+  # Store results
+  results <- rbind(results, data.frame(Batch_Size = batch_size, 
+                                       Algorithm = "UCB", 
+                                       Average_Reward = avg_ucb_reward))
+  
+  results <- rbind(results, data.frame(Batch_Size = batch_size, 
+                                       Algorithm = "Thompson", 
+                                       Average_Reward = avg_thompson_reward))
+}
+
+# Step 5: Plot the results
+library(ggplot2)
+ggplot(results, aes(x = Batch_Size, y = Average_Reward, color = Algorithm)) + 
+  geom_line() + 
+  labs(title = "Average Reward Comparison: UCB vs Thompson Sampling",
+       x = "Batch Size", y = "Average Reward")
+
+# View the table of results
+print(results)
+
+
+```
