@@ -24,7 +24,7 @@ knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
 
 # Download Dataset
 
-```{r}
+```{r, download dataset}
 dfZozo_20 <- read.csv("zozo_noContext_20items_tiny.csv")
 
 dfZozo_20 <- dfZozo_20 %>% select(item_id, click, position, user_feature_0, user_feature_1,user_feature_2, user_feature_3)
@@ -32,9 +32,9 @@ dfZozo_20 <- dfZozo_20 %>% select(item_id, click, position, user_feature_0, user
 ```
 
 
-We combined the position and item_id columns to identify the optimal position and item for displaying our banner, aiming to present the best option to our customers. Bearing this in mind for the Thompson Analysis we are going to use 60 arms (20 items multiplying by 3 positions).
+We combined the position and item_id columns to identify the optimal position and item for displaying our banner, aiming to present the best option to our customers. Bearing this in mind for the Thompson analysis we are going to use 60 arms (20 items multiplying by 3 positions).
 
-```{r}
+```{r, combining item_ids and position}
 
 dfZozo_20$combinations <- paste(dfZozo_20$position, dfZozo_20$item_id, sep = "_")
 
@@ -48,9 +48,497 @@ unique_combinations_count
 
 ```
 
+#Heterogeneity 
+
+Our initial strategy involved selecting a specific feature and assessing whether any segment within that feature significantly outperformed the others; the details of this analysis are provided in our appendix. However, focusing our analysis on individual segments within each feature proved challenging, as most segments did not show significant differences in clicks upon regression analysis. Consequently, we shifted our approach to combine features, concentrating on enhancing segments already generating clicks. To achieve this, we generated all possible combinations of user features and identified those with click counts greater than zero, focusing our efforts on these segments that were already generating clicks. 
+
+
+```{r}
+
+# Identify the number of unique values and list them for each user feature column
+unique_user_features <- list(
+  user_feature_0 = unique(dfZozo_20$user_feature_0),
+  user_feature_1 = unique(dfZozo_20$user_feature_1),
+  user_feature_2 = unique(dfZozo_20$user_feature_2),
+  user_feature_3 = unique(dfZozo_20$user_feature_3)
+)
+
+# Display the number of unique values and their respective lists
+for (i in names(unique_user_features)) {
+  cat("\n", i, "- Number of unique values:", length(unique_user_features[[i]]), "\n")
+  print(unique_user_features[[i]])
+}
+```
+```{r}
+# Extract unique values for each user feature column
+user_feature_0 = unique(dfZozo_20$user_feature_0)
+user_feature_1 = unique(dfZozo_20$user_feature_1)
+user_feature_2 = unique(dfZozo_20$user_feature_2)
+user_feature_3 = unique(dfZozo_20$user_feature_3)
+
+# Create all possible combinations of the user features
+all_combinations <- expand.grid(
+  user_feature_0 = user_feature_0,
+  user_feature_1 = user_feature_1,
+  user_feature_2 = user_feature_2,
+  user_feature_3 = user_feature_3
+)
+
+# Label each combination as 'Agent (number)'
+all_combinations <- all_combinations %>%
+  mutate(Agent = paste0("Agent_", row_number()))
+
+# View the first few rows of the combinations with agent labels
+print(all_combinations)
+```
+
+```{r}
+# Step 3: Merge agents with the original dataset based on the user features
+df_with_agents <- dfZozo_20 %>%
+  left_join(all_combinations, by = c("user_feature_0", "user_feature_1", "user_feature_2", "user_feature_3"))
+
+# Step 4: Group by Agent and filter agents that have at least one click (reward)
+agents_with_clicks <- df_with_agents %>%
+  mutate(click = as.numeric(as.character(click))) %>%  # Ensure 'click' is numeric
+  group_by(Agent) %>%
+  summarize(total_clicks = sum(click, na.rm = TRUE)) %>%
+  filter(total_clicks > 0)  # Keep only agents with at least one click
+
+
+# Step 5: Eliminate agents with no clicks and return the final dataset
+df_filtered_agents <- df_with_agents %>%
+  filter(Agent %in% agents_with_clicks$Agent)
+
+# Step 6: Sort the filtered dataset by Agent
+df_sorted_by_agent <- df_filtered_agents %>%
+  arrange(Agent)
+
+# Step 7: View the sorted dataset
+print(df_sorted_by_agent)
+
+unique_agent_count <- n_distinct(df_filtered_agents$Agent)
+
+```
+```{r}
+num_agents <- df_sorted_by_agent %>%
+  summarize(total_agents = n_distinct(Agent))
+
+print(num_agents)
+
+```
+```{r}
+agent_counts <- df_sorted_by_agent %>%
+  group_by(Agent) %>%
+  summarize(agent_appearance_count = n())
+
+print(agent_counts)
+
+```
+
+#Data cleaning
+The remainder of our analysis will focus on the filtered dataset of agents (segments) who clicked on the banner at least once.
+```{r, data cleaning}
+#In order to perform the logit regression for heterogeneity purposes present in the appendix we had to transform our click variable into a factor variable but now we want to make it go back to a numeric variable.
+df_filtered_agents$click <- as.numeric(as.character(df_filtered_agents$click))
+```
+
+#Calculate the True CTR
+
+In Thompson Sampling, the true click-through rate (true CTR) represents the actual probability that a user will click on a given option (or arm) when it is shown. It is calculated as the total number of clicks divided by the total number of times that option was displayed. In our case, we can know this because we have offline data available, which allows us to directly observe and calculate the true CTR for each arm.
+
+```{r, true ctr}
+
+# Calculate the true CTR for each arm
+true_CTRs <- df_filtered_agents %>%
+  group_by(combination_index) %>%
+  summarize(
+    total_clicks = sum(click),    # Sum of clicks for each arm
+    total_shown = n(),            # Total times each arm was shown
+    true_CTR = total_clicks / total_shown # Calculate CTR for each arm
+  )
+
+# View the true CTRs for each arm
+print(true_CTRs)
+
+```
+
+
+
+#Batching without the contextual package
+
+We picked 4442 rounds per simulation because it matches the number of observations in our dataset, ensuring that each round corresponds to a specific data point. Rounds represent the individual decisions made by the algorithm during each simulation, with each round corresponding to one decision or arm selection based on the Beta distribution sampling. We also ran 10 simulations since that’s the same number we used when running the Thompson Sampling model with the contextual package, allowing us to directly compare the results. Running multiple simulations helps ensure that the results are robust and not influenced by randomness, as it averages out the effects of any random fluctuations that might occur in a single run. 
+
+
+In each simulation, for every round, we sampled from the Beta distributions based on the successes and failures recorded for each arm and then selected the arm with the highest sampled value. We simulated rewards based on the true click-through rates. Instead of updating the model after each round, we collected rewards for a batch of rounds, and once the batch was complete, we updated the success and failure counts for the chosen arms. This allowed us to test how the model performs when it’s updated less frequently. After that, we calculated cumulative rewards across all the rounds, averaged the results over all the simulations, and added confidence intervals. 
+```{r}
+set.seed(0)
+
+# Number of simulations
+n_simulations <- 10
+
+# Horizon (number of rounds per simulation)
+n_rounds <- 4442
+
+# Batch sizes
+batch_sizes <- c(1, 5, 20, 50, 100)
+
+# Initialize storage for cumulative rewards across batch sizes
+df_cumulative_rewards <- data.frame()
+
+# Loop over each batch size
+for (batch_size in batch_sizes) {
+  
+  # Initialize storage for the current batch size across simulations
+  batch_results <- list()
+  
+  # Thompson Sampling with multiple simulations
+  for (sim in 1:n_simulations) {
+    
+    # Extract unique arms from the dfZozo_20 dataset
+    arms <- unique(df_filtered_agents$combination_index)
+    
+    # Number of unique arms
+    n_arms <- length(arms)
+    
+    # Initialize success and failure counts for each arm
+    successes <- rep(0, n_arms)
+    failures <- rep(0, n_arms)
+    
+    # Initialize batch variables
+    batch_rewards <- rep(0, batch_size)        # To store rewards for each batch
+    batch_chosen_arms <- rep(0, batch_size)    # To store chosen arms for each batch
+    batch_index <- 1                           # To keep track of which round within the batch
+    
+    # Results storage for each simulation (for visualization)
+    results <- data.frame(Round = 1:n_rounds, ChosenArm = integer(n_rounds), Reward = integer(n_rounds))
+    
+    # Thompson Sampling algorithm for one simulation
+    for (round in 1:n_rounds) {
+      
+      # PREDICT: Sample from the Beta distribution for each arm
+      beta_samples <- rbeta(n_arms, successes + 1, failures + 1)
+      
+      # ACT: Choose the arm with the highest sampled value
+      chosen_arm_index <- which.max(beta_samples)
+      chosen_arm <- arms[chosen_arm_index]
+      
+      # ENVIRONMENT: Simulate whether the chosen arm gives a click based on its true CTR from true_CTRs dataset
+      true_CTR <- true_CTRs %>% filter(combination_index == chosen_arm) %>% pull(true_CTR)
+      reward <- rbinom(1, 1, true_CTR)
+      
+      # Store rewards and chosen arms in the batch variables
+      batch_rewards[batch_index] <- reward
+      batch_chosen_arms[batch_index] <- chosen_arm_index
+      
+      # Store the result for visualization
+      results[round, "ChosenArm"] <- chosen_arm
+      results[round, "Reward"] <- reward
+      
+      # Increment the batch index
+      batch_index <- batch_index + 1
+      
+      # If the batch is complete or it is the last round, update successes and failures for the batch
+      if (batch_index > batch_size || round == n_rounds) {
+        for (i in 1:(batch_index - 1)) {
+          arm_index <- batch_chosen_arms[i]
+          if (batch_rewards[i] == 1) {
+            successes[arm_index] <- successes[arm_index] + 1
+          } else {
+            failures[arm_index] <- failures[arm_index] + 1
+          }
+        }
+        
+        # Reset the batch index to start the next batch
+        batch_index <- 1
+      }
+    }
+    
+    # Add cumulative rewards for this simulation
+    results <- results %>%
+      mutate(sim = sim, t = Round, cumulative_reward = cumsum(Reward))
+    
+    # Store the results of this simulation
+    batch_results[[sim]] <- results
+  }
+  
+  cumulative_rewards <- lapply(batch_results, function(df) df$cumulative_reward)
+  
+  cumulative_rewards_df <- as.data.frame(do.call(cbind, cumulative_rewards))
+  
+  cumulative_rewards_df <- cbind(cumulative_rewards_df, total = rowSums(cumulative_rewards_df))
+  
+   cumulative_rewards_df <- cumulative_rewards_df %>%
+    mutate(avg_cumulative_reward = total / n_simulations,
+           se_cumulative_reward = apply(cumulative_rewards_df[, 1:n_simulations], 1, sd, na.rm = TRUE) / sqrt(n_simulations),
+           cumulative_reward_lower_CI = avg_cumulative_reward - 1.96 * se_cumulative_reward,
+           cumulative_reward_upper_CI = avg_cumulative_reward + 1.96 * se_cumulative_reward)
+  
+   # Add batch size information
+  cumulative_rewards_df$batch_size <- batch_size
+  cumulative_rewards_df$Round <- 1:n_rounds
+  
+  # Combine with the overall cumulative rewards dataframe
+  df_cumulative_rewards <- bind_rows(df_cumulative_rewards, cumulative_rewards_df)
+}
+ 
+
+# Plotting
+plot_1 <- ggplot(df_cumulative_rewards, aes(x = Round, y = avg_cumulative_reward, color = as.factor(batch_size), fill = as.factor(batch_size))) +
+  geom_line(size = 1) +
+  geom_ribbon(aes(ymin = cumulative_reward_lower_CI, ymax = cumulative_reward_upper_CI), alpha = 0.2) +
+  labs(title = "Average Cumulative Rewards with 95% CI for Different Batch Sizes", x = "Time", y = "Average Cumulative Reward") +
+  theme_minimal() +
+  scale_color_manual(values = c("red", "orange", "green", "blue", "purple")) +
+  scale_fill_manual(values = c("red", "orange", "green", "blue", "purple")) +
+  theme(legend.title = element_text(size = 12),
+        legend.text = element_text(size = 10)) +
+  xlim(0, 2000)   #set to 50 to make it comparable with the results obtained upon calculating with the contextual package 
+  
+
+# Plotting
+plot_2 <- ggplot(df_cumulative_rewards, aes(x = Round, y = avg_cumulative_reward, color = as.factor(batch_size), fill = as.factor(batch_size))) +
+  geom_line(size = 1) +
+  labs(title = "Average Cumulative Rewards with 95% CI for Different Batch Sizes", x = "Time", y = "Average Cumulative Reward") +
+  theme_minimal() +
+  scale_color_manual(values = c("red", "orange", "green", "blue", "purple")) +
+  scale_fill_manual(values = c("red", "orange", "green", "blue", "purple")) +
+  theme(legend.title = element_text(size = 12),
+        legend.text = element_text(size = 10)) +
+  xlim(0, 2000)
+
+print(plot_1)
+print(plot_2)
+ 
+```
+In these graphs, there's a notable variation in performance: with shorter rounds (up to 50), batch size 10 performs better, likely due to its balance between reducing noise and providing stable updates, which is crucial when fewer rounds limit data availability. However, in longer rounds (up to 4442), batch size 1 and 5 shows superior performance with a smoother and more consistent increase in cumulative rewards, suggesting that the benefits of immediate feedback and continuous learning outweigh the potential noise, especially when more data is available to correct and refine the algorithm’s strategy. This finding supports the use of batch size 1, as confirmed by our contextual package analysis (that you can find in the appendix), which also highlighted batch size 1 as the optimal choice.
+
+
+
+#Parameter Tuning 
+
+```{r}
+
+set.seed(0)
+
+# Get a summary of click means per item
+df_filtered_agents %>%
+  group_by(combination_index) %>%
+  summarise(mean_click = mean(click),  total_click = sum(click)) #there are a lot more failures than success
+
+#Verify Number of Success 
+count <- sum(df_filtered_agents$click == 1)
+```
+
+Based on the summary of mean_click per arms, we have concluded that there is much more failures than success since the mean_click values are close to zero. These parameters represent our prior belief about the success rate, where $\alpha$ represents the number of observed successes and $\beta$ represents the number of observed failures. A higher initial $\beta$ reflects a bias towards failure. With a slight bias towards failure, 10 different pairs of alphas and betas were chosen to be explored, from (1,10) to (1,100).
+
+After comparing the result with various different pairs of alphas and betas, the best pair of alphas and betas were chosen to be (1,90) and the worst is (1,70) for this dataset. We will use this for the further analysis. The result of the other pairs can be found in the appendix.
+
+
+```{r, TS parameter tuning}
+# Define alphas and betas for sensitivity analysis
+alphas <- c(1, 1)
+betas <-  c(70,90)
+
+# Set simulation parameters
+size_sim <- 4442 # Number of impressions per simulation
+n_sim <- 10       # Number of simulations
+
+# Create bandit for 20 arms
+bandit_Zozo_20 <- OfflineReplayEvaluatorBandit$new(formula = click ~ combination_index,
+                                                   data = df_filtered_agents,
+                                                   randomize = FALSE)
+
+# Initialize a list to store results
+results_list <- list()
+
+# Loop over alphas and betas to create Thompson Sampling policies and agents
+for (i in seq_along(alphas)) {
+  
+  # Create Thompson Sampling policy for current alpha and beta
+  TS <- ThompsonSamplingPolicy$new(alpha = alphas[i], beta = betas[i])
+
+  # Create the agent for 20 arms
+  agent_TS_zozo_20 <- Agent$new(TS, bandit_Zozo_20)
+
+  # Run the simulator for Thompson Sampling
+  simulator_20 <- Simulator$new(agent_TS_zozo_20, 
+                              horizon = size_sim, 
+                              simulations = n_sim)
+
+  # Run the simulator
+  history_TS_zozo_20 <- simulator_20$run()
+
+  # Store the results and tag with current alpha and beta values
+  results <- history_TS_zozo_20$data %>%
+    mutate(alpha = alphas[i], beta = betas[i])
+  
+  results_list[[i]] <- results  # Add results to the list
+}
+
+# Combine all the results into a single dataframe
+df_TS_zozo_20 <- bind_rows(results_list)
+
+# View the combined results
+head(df_TS_zozo_20)
+
+```
+
+```{r, TS max obs}
+# Create a combined alpha_beta column
+df_TS_zozo_20 <- df_TS_zozo_20 %>%
+  mutate(alpha_beta = paste0("alpha=", alpha, "_beta=", beta))
+
+# Now group by alpha_beta and sim to calculate max_t
+df_TS_zozo_20_max_t <- df_TS_zozo_20 %>%
+  group_by(alpha_beta, sim) %>%
+  summarize(max_t = max(t)) # Get the maximum time step (t) for each alpha-beta pair and sim
+
+# View the results
+print(df_TS_zozo_20_max_t)
+
+x <- min(df_TS_zozo_20_max_t$max_t)
+y <- max(df_TS_zozo_20_max_t$max_t)
+print(x)
+print(y)
+```
+
+The results show that the maximum number of rounds across the 10 simulations for each pair of alpha and betas varied between 62 and 95. While most simulations fall within a narrow range, this variation suggests differences in exploration patterns, where some simulations explored more arms or took more actions before reaching the end of the dataset.
+
+```{r, TS ggplot}
+# Max of observations, adjusted to the number of observations per simulation and the size of the dataset used
+max_obs <- x
+
+# dataframe transformation
+df_history_agg <- df_TS_zozo_20 %>%
+  group_by(sim) %>%
+  mutate(cumulative_reward = cumsum(reward)) %>%  # Calculate cumulative reward over time for each sim
+  group_by(t) %>%
+  summarise(avg_cumulative_reward = mean(cumulative_reward),  # Average cumulative reward
+            se_cumulative_reward = sd(cumulative_reward, na.rm = TRUE) / sqrt(n_sim),  # Standard error
+            .groups = 'drop') %>%
+  mutate(cumulative_reward_lower_CI = avg_cumulative_reward - 1.96 * se_cumulative_reward,
+         cumulative_reward_upper_CI = avg_cumulative_reward + 1.96 * se_cumulative_reward) %>%
+  filter(t <= max_obs)
+
+# Dataframe transformation: cumulative reward calculations and confidence intervals
+df_history_agg <- df_TS_zozo_20 %>%
+  group_by(alpha_beta, sim) %>%
+  mutate(cumulative_reward = cumsum(reward)) %>%  # Calculate cumulative reward over time for each sim
+  group_by(alpha_beta, t) %>%
+  summarise(
+    avg_cumulative_reward = mean(cumulative_reward),  # Average cumulative reward
+    se_cumulative_reward = sd(cumulative_reward, na.rm = TRUE) / sqrt(n()),  # Standard error
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    cumulative_reward_lower_CI = avg_cumulative_reward - 1.96 * se_cumulative_reward,
+    cumulative_reward_upper_CI = avg_cumulative_reward + 1.96 * se_cumulative_reward
+  ) %>%
+  filter(t <= max_obs)
+
+# Plot the average cumulative rewards over time for each alpha-beta pair
+ggplot(data = df_history_agg, aes(x = t, y = avg_cumulative_reward, color = alpha_beta)) +
+  geom_line(size = 1.5) +  # Line for average cumulative reward
+  labs(title = "Average Cumulative Rewards Over Time by Alpha-Beta Pairs", 
+       x = 'Time', 
+       y = 'Average Cumulative Reward', 
+       color = 'Alpha-Beta Pair') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for better readability
+
+# Plot Average Cumulative Reward with 95% CI
+ggplot(data = df_history_agg, aes(x = t, y = avg_cumulative_reward, color = alpha_beta)) +
+  geom_line(size = 1.5) +  # Line for average cumulative reward
+  geom_ribbon(aes(ymin = pmax(cumulative_reward_lower_CI, 0),  # Ensure lower CI does not go below 0
+                  ymax = cumulative_reward_upper_CI, 
+                  fill = alpha_beta), alpha = 0.1) +  # Confidence interval ribbon
+  labs(title = "Average Cumulative Rewards with 95% CI Over Time by Alpha-Beta Pairs", 
+       x = 'Time', 
+       y = 'Average Cumulative Reward', 
+       color = 'Alpha-Beta Pair', 
+       fill = 'Alpha-Beta Pair') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+The graph illustrates average cumulative rewards for two Thompson Sampling configurations over 60 time units: alpha=1 with beta=70 (red) and beta=90 (blue). The configuration with beta=70 appears to outperforms the other, achieving higher rewards with less variability, suggesting that a higher beta value optimizes rewards more effectively.
+
+
+#Best Position and Item according to TS
+This code implements Thompson Sampling with a batch size of 1, using alpha=1 and beta=90, which were found to be the best-performing parameters from previous analysis. The algorithm is designed to identify the best-performing arm in a multi-armed bandit problem based on cumulative successes over 10 simulations, each with 4442 rounds. For each round, the algorithm samples from a Beta distribution for each arm, selects the arm with the highest sampled value, and simulates a reward based on the true CTR of the chosen arm. Successes and failures for each arm are updated after every round, and the arm with the most cumulative successes across simulations is identified as the best.
+
+```{r}
+set.seed(0)
+# Number of simulations
+n_simulations <- 10
+
+# Horizon (number of rounds per simulation)
+n_rounds <- 4442
+
+# Batch size set to 1
+batch_size <- 1
+
+# Store cumulative successes for each arm
+total_successes <- rep(0, length(unique(df_filtered_agents$combination_index)))
+
+# Thompson Sampling with multiple simulations for batch_size = 1
+for (sim in 1:n_simulations) {
+  
+  # Extract unique arms from the df_filtered_agents dataset
+  arms <- unique(df_filtered_agents$combination_index)
+  
+  # Number of unique arms
+  n_arms <- length(arms)
+  
+  # Initialize success and failure counts for each arm
+  successes <- rep(0, n_arms)
+  failures <- rep(0, n_arms)
+  
+  # Thompson Sampling algorithm for one simulation
+  for (round in 1:n_rounds) {
+    
+    # PREDICT: Sample from the Beta distribution for each arm (with alpha=1, beta=70)
+    beta_samples <- rbeta(n_arms, successes + 1, failures + 70)
+    
+    # ACT: Choose the arm with the highest sampled value
+    chosen_arm_index <- which.max(beta_samples)
+    chosen_arm <- arms[chosen_arm_index]
+    
+    # ENVIRONMENT: Simulate whether the chosen arm gives a click based on its true CTR
+    true_CTR <- true_CTRs %>% filter(combination_index == chosen_arm) %>% pull(true_CTR)
+    reward <- rbinom(1, 1, true_CTR)
+    
+    # Update successes and failures for the chosen arm
+    if (reward == 1) {
+      successes[chosen_arm_index] <- successes[chosen_arm_index] + 1
+    } else {
+      failures[chosen_arm_index] <- failures[chosen_arm_index] + 1
+    }
+  }
+  
+  # Accumulate the successes for all simulations
+  total_successes <- total_successes + successes
+}
+
+# Identify the arm with the most cumulative successes
+best_arm <- which.max(total_successes)
+cat("The best arm is:", arms[best_arm])
+
+
+```
+```{r}
+# Retrieve the row where combination_index is equal to the best arm 
+combination_26 <- df_filtered_agents[df_filtered_agents$combination_index == 26, ]
+
+combination_26
+```
+The best position is 2 and the best item is 14
+
+
+#Appendix
+
 #Heterogeneity
 
-To perform a meaningful heterogeneity and aggregation analysis, our first step is to identify potential clusters within the dataset. This involves grouping the data based on various features and selecting the one that provides the most useful segmentation. Ideally, with a detailed description of the features, we could create more targeted segments, such as isolating middle-aged women . However, since we lack detailed information, we will focus on choosing the feature that best divides the population into meaningful subgroups.
+To perform a meaningful heterogeneity and aggregation analysis, our first step is to identify potential clusters within the dataset. This involves grouping the data based on various features and selecting the one that provides the most useful segmentation. Ideally, with a detailed description of the features, we could create more targeted segments, such as isolating middle-aged women. However, since we lack detailed information, we will focus on choosing the feature that best divides the population into meaningful subgroups.
 
 What we are looking for is a feature that on one hand does not create too many subgroups, which could dilute our analysis, and on the other hand ensures that each subgroup has a substantial portion of the sample. This will help us avoid insignificant results and ensure that our analysis captures meaningful differences across segments.
 
@@ -154,7 +642,7 @@ for (i in seq_along(feature_0_datasets)) {
 
 ```{r}
 set.seed(0)
-max_t <- min(df_TS_max_t$max_t) #Thw lowest value in the max_t for each dataset
+max_t <- min(df_TS_max_t$max_t) #The lowest value in the max_t for each dataset
 # Prepare an empty dataframe to store the aggregated results
 df_history_all <- data.frame()
 
@@ -236,728 +724,15 @@ summary(logit_model_1)
 summary(logit_model_2)
 summary(logit_model_3)
 ```
-Instead, we decided to focus on increasing the number of clicks in segments that were already generating clicks. To achieve this, we created all possible combinations of user features and identified the combinations where the number of clicks was greater than 0. 
 
-
-```{r}
-
-# Identify the number of unique values and list them for each user feature column
-unique_user_features <- list(
-  user_feature_0 = unique(dfZozo_20$user_feature_0),
-  user_feature_1 = unique(dfZozo_20$user_feature_1),
-  user_feature_2 = unique(dfZozo_20$user_feature_2),
-  user_feature_3 = unique(dfZozo_20$user_feature_3)
-)
-
-# Display the number of unique values and their respective lists
-for (i in names(unique_user_features)) {
-  cat("\n", i, "- Number of unique values:", length(unique_user_features[[i]]), "\n")
-  print(unique_user_features[[i]])
-}
-```
-```{r}
-# Extract unique values for each user feature column
-user_feature_0 = unique(dfZozo_20$user_feature_0)
-user_feature_1 = unique(dfZozo_20$user_feature_1)
-user_feature_2 = unique(dfZozo_20$user_feature_2)
-user_feature_3 = unique(dfZozo_20$user_feature_3)
-
-# Create all possible combinations of the user features
-all_combinations <- expand.grid(
-  user_feature_0 = user_feature_0,
-  user_feature_1 = user_feature_1,
-  user_feature_2 = user_feature_2,
-  user_feature_3 = user_feature_3
-)
-
-# Label each combination as 'Agent (number)'
-all_combinations <- all_combinations %>%
-  mutate(Agent = paste0("Agent_", row_number()))
-
-# View the first few rows of the combinations with agent labels
-print(all_combinations)
-```
-
-```{r}
-# Step 3: Merge agents with the original dataset based on the user features
-df_with_agents <- dfZozo_20 %>%
-  left_join(all_combinations, by = c("user_feature_0", "user_feature_1", "user_feature_2", "user_feature_3"))
-
-# Step 4: Group by Agent and filter agents that have at least one click (reward)
-agents_with_clicks <- df_with_agents %>%
-  mutate(click = as.numeric(as.character(click))) %>%  # Ensure 'click' is numeric
-  group_by(Agent) %>%
-  summarize(total_clicks = sum(click, na.rm = TRUE)) %>%
-  filter(total_clicks > 0)  # Keep only agents with at least one click
-
-
-# Step 5: Eliminate agents with no clicks and return the final dataset
-df_filtered_agents <- df_with_agents %>%
-  filter(Agent %in% agents_with_clicks$Agent)
-
-# Step 6: Sort the filtered dataset by Agent
-df_sorted_by_agent <- df_filtered_agents %>%
-  arrange(Agent)
-
-# Step 7: View the sorted dataset
-print(df_sorted_by_agent)
-
-unique_agent_count <- n_distinct(df_filtered_agents$Agent)
-
-```
-```{r}
-num_agents <- df_sorted_by_agent %>%
-  summarize(total_agents = n_distinct(Agent))
-
-print(num_agents)
-
-```
-```{r}
-agent_counts <- df_sorted_by_agent %>%
-  group_by(Agent) %>%
-  summarize(agent_appearance_count = n())
-
-print(agent_counts)
-
-```
-
-#data cleaning
-The remainder of our analysis will focus on the filtered dataset of agents (segments) who clicked on the banner at least once.
-```{r}
-#In order to perform the logit regression we had to tranform our click variable into a factor variable but now we want to make it go back to a numeric variable.
-df_filtered_agents <- df_filtered_agents %>%
-  mutate(click = as.factor(click),  # Convert 'click' to factor
-         click_numeric = as.numeric(levels(click))[click])  # Convert factor levels to numeric
-```
-
-#Calculate the True CTR
-In Thompson Sampling, the true click-through rate (true CTR) represents the actual probability that a user will click on a given option (or arm) when it is shown. It is calculated as the total number of clicks divided by the total number of times that option was displayed. In our case, we can know this because we have offline data available, which allows us to directly observe and calculate the true CTR for each arm.
-
-```{r}
-# Load the necessary library
-library(dplyr)
-
-df_filtered_agents$click <- as.numeric(as.character(df_filtered_agents$click))
-
-# Calculate the true CTR for each arm
-true_CTRs <- df_filtered_agents %>%
-  group_by(combination_index) %>%
-  summarize(
-    total_clicks = sum(click),    # Sum of clicks for each arm
-    total_shown = n(),            # Total times each arm was shown
-    true_CTR = total_clicks / total_shown # Calculate CTR for each arm
-  )
-
-# View the true CTRs for each arm
-print(true_CTRs)
-
-```
-
-
-
-#Batching without the contextual package
-```{r}
-set.seed(0)
-
-# Load necessary libraries
-library(dplyr)
-library(ggplot2)
-
-# Number of simulations
-n_simulations <- 10
-
-# Horizon (number of rounds per simulation)
-n_rounds <- 4442
-
-# Batch sizes
-batch_sizes <- c(1, 5, 10, 50)
-
-# Initialize storage for cumulative rewards across batch sizes
-df_cumulative_rewards <- data.frame()
-
-# Loop over each batch size
-for (batch_size in batch_sizes) {
-  
-  # Initialize storage for the current batch size across simulations
-  batch_results <- list()
-  
-  # Thompson Sampling with multiple simulations
-  for (sim in 1:n_simulations) {
-    
-    # Extract unique arms from the dfZozo_20 dataset
-    arms <- unique(df_filtered_agents$combination_index)
-    
-    # Number of unique arms
-    n_arms <- length(arms)
-    
-    # Initialize success and failure counts for each arm
-    successes <- rep(0, n_arms)
-    failures <- rep(0, n_arms)
-    
-    # Initialize batch variables
-    batch_rewards <- rep(0, batch_size)        # To store rewards for each batch
-    batch_chosen_arms <- rep(0, batch_size)    # To store chosen arms for each batch
-    batch_index <- 1                           # To keep track of which round within the batch
-    
-    # Results storage for each simulation (for visualization)
-    results <- data.frame(Round = 1:n_rounds, ChosenArm = integer(n_rounds), Reward = integer(n_rounds))
-    
-    # Thompson Sampling algorithm for one simulation
-    for (round in 1:n_rounds) {
-      
-      # PREDICT: Sample from the Beta distribution for each arm
-      beta_samples <- rbeta(n_arms, successes + 1, failures + 1)
-      
-      # ACT: Choose the arm with the highest sampled value
-      chosen_arm_index <- which.max(beta_samples)
-      chosen_arm <- arms[chosen_arm_index]
-      
-      # ENVIRONMENT: Simulate whether the chosen arm gives a click based on its true CTR from true_CTRs dataset
-      true_CTR <- true_CTRs %>% filter(combination_index == chosen_arm) %>% pull(true_CTR)
-      reward <- rbinom(1, 1, true_CTR)
-      
-      # Store rewards and chosen arms in the batch variables
-      batch_rewards[batch_index] <- reward
-      batch_chosen_arms[batch_index] <- chosen_arm_index
-      
-      # Store the result for visualization
-      results[round, "ChosenArm"] <- chosen_arm
-      results[round, "Reward"] <- reward
-      
-      # Increment the batch index
-      batch_index <- batch_index + 1
-      
-      # If the batch is complete or it is the last round, update successes and failures for the batch
-      if (batch_index > batch_size || round == n_rounds) {
-        for (i in 1:(batch_index - 1)) {
-          arm_index <- batch_chosen_arms[i]
-          if (batch_rewards[i] == 1) {
-            successes[arm_index] <- successes[arm_index] + 1
-          } else {
-            failures[arm_index] <- failures[arm_index] + 1
-          }
-        }
-        
-        # Reset the batch index to start the next batch
-        batch_index <- 1
-      }
-    }
-    
-    # Add cumulative rewards for this simulation
-    results <- results %>%
-      mutate(sim = sim, t = Round, cumulative_reward = cumsum(Reward))
-    
-    # Store the results of this simulation
-    batch_results[[sim]] <- results
-  }
-  
-   cumulative_rewards <- lapply(batch_results, function(df) df$cumulative_reward)
-  
-  cumulative_rewards_df <- as.data.frame(do.call(cbind, cumulative_rewards))
-  
-  cumulative_rewards_df <- cbind(cumulative_rewards_df, total = rowSums(cumulative_rewards_df))
-  
-   cumulative_rewards_df <- cumulative_rewards_df %>%
-    mutate(avg_cumulative_reward = total / n_simulations,
-           se_cumulative_reward = apply(cumulative_rewards_df[, 1:n_simulations], 1, sd, na.rm = TRUE) / sqrt(n_simulations),
-           cumulative_reward_lower_CI = avg_cumulative_reward - 1.96 * se_cumulative_reward,
-           cumulative_reward_upper_CI = avg_cumulative_reward + 1.96 * se_cumulative_reward)
-  
-   # Add batch size information
-  cumulative_rewards_df$batch_size <- batch_size
-  cumulative_rewards_df$Round <- 1:n_rounds
-  
-  # Combine with the overall cumulative rewards dataframe
-  df_cumulative_rewards <- bind_rows(df_cumulative_rewards, cumulative_rewards_df)
-}
- 
-
-# Plotting
-plot_1 <- ggplot(df_cumulative_rewards, aes(x = Round, y = avg_cumulative_reward, color = as.factor(batch_size), fill = as.factor(batch_size))) +
-  geom_line(size = 1) +
-  geom_ribbon(aes(ymin = cumulative_reward_lower_CI, ymax = cumulative_reward_upper_CI), alpha = 0.2) +
-  labs(title = "Average Cumulative Rewards with 95% CI for Different Batch Sizes", x = "Time", y = "Average Cumulative Reward") +
-  theme_minimal() +
-  scale_color_manual(values = c("red", "orange", "green", "blue", "purple")) +
-  scale_fill_manual(values = c("red", "orange", "green", "blue", "purple")) +
-  theme(legend.title = element_text(size = 12),
-        legend.text = element_text(size = 10)) +
-  xlim(0, 50)  + #set to 50 to make it comparable with the results obtained upon calculating with the contextual package 
-  ylim(0,1)
-
-# Plotting
-plot_2 <- ggplot(df_cumulative_rewards, aes(x = Round, y = avg_cumulative_reward, color = as.factor(batch_size), fill = as.factor(batch_size))) +
-  geom_line(size = 1) +
-  geom_ribbon(aes(ymin = cumulative_reward_lower_CI, ymax = cumulative_reward_upper_CI), alpha = 0.2) +
-  labs(title = "Average Cumulative Rewards with 95% CI for Different Batch Sizes", x = "Time", y = "Average Cumulative Reward") +
-  theme_minimal() +
-  scale_color_manual(values = c("red", "orange", "green", "blue", "purple")) +
-  scale_fill_manual(values = c("red", "orange", "green", "blue", "purple")) +
-  theme(legend.title = element_text(size = 12),
-        legend.text = element_text(size = 10)) 
-
-print(plot_1)
-print(plot_2)
- 
-```
-In these graphs, there's a notable variation in performance: with shorter rounds (up to 50), batch size 10 performs better, likely due to its balance between reducing noise and providing stable updates, which is crucial when fewer rounds limit data availability. However, in longer rounds (up to 4442), batch size 1 shows superior performance with a smoother and more consistent increase in cumulative rewards, suggesting that the benefits of immediate feedback and continuous learning outweigh the potential noise, especially when more data is available to correct and refine the algorithm’s strategy. This finding supports the use of batch size 1, as confirmed by our contextual package analysis, which also highlighted batch size 1 as the optimal choice.
-
-
-We picked 4442 rounds per simulation because it matches the number of observations in our dataset, ensuring that each round corresponds to a specific data point. Rounds represent the individual decisions made by the algorithm during each simulation, with each round corresponding to one decision or arm selection based on the Beta distribution sampling. We also ran 10 simulations since that’s the same number we used when running the Thompson Sampling model with the contextual package, allowing us to directly compare the results. Running multiple simulations helps ensure that the results are robust and not influenced by randomness, as it averages out the effects of any random fluctuations that might occur in a single run. 
-
-
-In each simulation, for every round, we sampled from the Beta distributions based on the successes and failures recorded for each arm and then selected the arm with the highest sampled value. We simulated rewards based on the true click-through rates. Instead of updating the model after each round, we collected rewards for a batch of rounds, and once the batch was complete, we updated the success and failure counts for the chosen arms. This allowed us to test how the model performs when it’s updated less frequently. After that, we calculated cumulative rewards across all the rounds, averaged the results over all the simulations, and added confidence intervals.
-
-#TS Parameter Tuning 
-
-```{r, data cleaning}
-# this version contains 20 arms (ZOZO)
-set.seed(0)
-
-# Load the dataset (assuming dfZozo_20 contains 'item_id' and 'click' columns)
-#dfZozo_20 <- read.csv("zozo_noContext_20items_tiny.csv")
-
-# Get a summary of click means per item
-df_filtered_agents %>%
-  group_by(item_id) %>%
-  summarise(mean_click = mean(click),  total_click = sum(click)) #there are a lot more failures than success
-
-#Verify Number of Success 
-count <- sum(df_filtered_agents$click == 1)
-```
-
-Based on the summary of mean_click per arms, we have concluded that there is much more failures than success since the mean_click values are close to zero. These parameters represent our prior belief about the success rate, where $\alpha$ represents the number of observed successes and $\beta$ represents the number of observed failures. A higher initial $\beta$ reflects a bias towards failure. With a slight bias towards failure, 10 different pairs of alphas and betas were chosen to be explored, from (1,10) to (1,100).
-
-After comparing the result with various different pairs of alphas and betas, the best pair of alphas and betas were chosen to be (1,90) and the worst is (1,70) for this dataset. We will use this for the further analysis. The result of the other pairs can be found in the appendix.
-
-
-```{r, TS parameter tuning}
-# Define alphas and betas for sensitivity analysis
-alphas <- c(1, 1)
-betas <-  c(70,90)
-
-# Set simulation parameters
-size_sim <- 4442 # Number of impressions per simulation
-n_sim <- 10       # Number of simulations
-
-# Create bandit for 20 arms
-bandit_Zozo_20 <- OfflineReplayEvaluatorBandit$new(formula = click ~ item_id,
-                                                   data = df_filtered_agents,
-                                                   randomize = FALSE)
-
-# Initialize a list to store results
-results_list <- list()
-
-# Loop over alphas and betas to create Thompson Sampling policies and agents
-for (i in seq_along(alphas)) {
-  
-  # Create Thompson Sampling policy for current alpha and beta
-  TS <- ThompsonSamplingPolicy$new(alpha = alphas[i], beta = betas[i])
-
-  # Create the agent for 20 arms
-  agent_TS_zozo_20 <- Agent$new(TS, bandit_Zozo_20)
-
-  # Run the simulator for Thompson Sampling
-  simulator_20 <- Simulator$new(agent_TS_zozo_20, 
-                              horizon = size_sim, 
-                              simulations = n_sim)
-
-  # Run the simulator
-  history_TS_zozo_20 <- simulator_20$run()
-
-  # Store the results and tag with current alpha and beta values
-  results <- history_TS_zozo_20$data %>%
-    mutate(alpha = alphas[i], beta = betas[i])
-  
-  results_list[[i]] <- results  # Add results to the list
-}
-
-# Combine all the results into a single dataframe
-df_TS_zozo_20 <- bind_rows(results_list)
-
-# View the combined results
-head(df_TS_zozo_20)
-
-```
-
-After comparing the result with various different pairs of alphas and betas, the best pair of alphas and betas were chosen to be (1,60) for this dataset. We will use this for the further analysis. The result of the other pairs can be found in the appendix.
-
-```{r, TS max obs}
-# Create a combined alpha_beta column
-df_TS_zozo_20 <- df_TS_zozo_20 %>%
-  mutate(alpha_beta = paste0("alpha=", alpha, "_beta=", beta))
-
-# Now group by alpha_beta and sim to calculate max_t
-df_TS_zozo_20_max_t <- df_TS_zozo_20 %>%
-  group_by(alpha_beta, sim) %>%
-  summarize(max_t = max(t)) # Get the maximum time step (t) for each alpha-beta pair and sim
-
-# View the results
-print(df_TS_zozo_20_max_t)
-
-x <- min(df_TS_zozo_20_max_t$max_t)
-y <- max(df_TS_zozo_20_max_t$max_t)
-print(x)
-print(y)
-```
-
-The results show that the maximum number of rounds across 20 simulations varied between 435 and 538. While most simulations fall within a narrow range, this variation suggests differences in exploration patterns, where some simulations explored more arms or took more actions before reaching the end of the dataset.
-
-```{r, TS ggplot}
-# Max of observations, adjusted to the number of observations per simulation (min 831) and the size of the dataset used
-max_obs <- x
-
-# dataframe transformation
-df_history_agg <- df_TS_zozo_20 %>%
-  group_by(sim) %>%
-  mutate(cumulative_reward = cumsum(reward)) %>%  # Calculate cumulative reward over time for each sim
-  group_by(t) %>%
-  summarise(avg_cumulative_reward = mean(cumulative_reward),  # Average cumulative reward
-            se_cumulative_reward = sd(cumulative_reward, na.rm = TRUE) / sqrt(n()),  # Standard error
-            .groups = 'drop') %>%
-  mutate(cumulative_reward_lower_CI = avg_cumulative_reward - 1.96 * se_cumulative_reward,
-         cumulative_reward_upper_CI = avg_cumulative_reward + 1.96 * se_cumulative_reward) %>%
-  filter(t <= max_obs)
-
-legend <- c("Avg." = "orange", "95% CI" = "gray") # set legend
-
-ggplot(data=df_history_agg, aes(x=t, y=avg_cumulative_reward)) +
-  geom_line(size=1.5,aes(color="Avg.")) + # add line
-  geom_ribbon(aes(ymin=ifelse(cumulative_reward_lower_CI<0, 0,cumulative_reward_lower_CI), # add confidence interval
-                  ymax=cumulative_reward_upper_CI,
-                  color = "95% CI"), alpha=0.1) +
-  labs(x = 'Time', y='Average Cumulative Reward', color='Metric') + # add titles
-  scale_color_manual(values=legend) + # add legend
-  theme_bw() # set the theme
-
-# Dataframe transformation: cumulative reward calculations and confidence intervals
-df_history_agg <- df_TS_zozo_20 %>%
-  group_by(alpha_beta, sim) %>%
-  mutate(cumulative_reward = cumsum(reward)) %>%  # Calculate cumulative reward over time for each sim
-  group_by(alpha_beta, t) %>%
-  summarise(
-    avg_cumulative_reward = mean(cumulative_reward),  # Average cumulative reward
-    se_cumulative_reward = sd(cumulative_reward, na.rm = TRUE) / sqrt(n()),  # Standard error
-    .groups = 'drop'
-  ) %>%
-  mutate(
-    cumulative_reward_lower_CI = avg_cumulative_reward - 1.96 * se_cumulative_reward,
-    cumulative_reward_upper_CI = avg_cumulative_reward + 1.96 * se_cumulative_reward
-  ) %>%
-  filter(t <= max_obs)
-
-# Plot the average cumulative rewards over time for each alpha-beta pair
-ggplot(data = df_history_agg, aes(x = t, y = avg_cumulative_reward, color = alpha_beta)) +
-  geom_line(size = 1.5) +  # Line for average cumulative reward
-  labs(title = "Average Cumulative Rewards Over Time by Alpha-Beta Pairs", 
-       x = 'Time', 
-       y = 'Average Cumulative Reward', 
-       color = 'Alpha-Beta Pair') +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for better readability
-
-# Plot Average Cumulative Reward with 95% CI
-ggplot(data = df_history_agg, aes(x = t, y = avg_cumulative_reward, color = alpha_beta)) +
-  geom_line(size = 1.5) +  # Line for average cumulative reward
-  geom_ribbon(aes(ymin = pmax(cumulative_reward_lower_CI, 0),  # Ensure lower CI does not go below 0
-                  ymax = cumulative_reward_upper_CI, 
-                  fill = alpha_beta), alpha = 0.1) +  # Confidence interval ribbon
-  labs(title = "Average Cumulative Rewards with 95% CI Over Time by Alpha-Beta Pairs", 
-       x = 'Time', 
-       y = 'Average Cumulative Reward', 
-       color = 'Alpha-Beta Pair', 
-       fill = 'Alpha-Beta Pair') +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-```
-In this graph, the confidence intervals for the different pairs overlap, which indicates that the observed differences between them may not be statistically significant. This overlap is largely a result of the limited sample size in our dataset. When the dataset is small, variability tends to increase, making it more difficult to detect meaningful distinctions between groups. As a result, the confidence intervals widen, and it becomes harder to confidently assert that any observed differences are not due to random chance.
-
-# TS best item, position
-```{r, TS best item, position}
-
-# Create bandit
-bandit_TS_item <- OfflineReplayEvaluatorBandit$new(formula = click ~ item_id,
-                                                   data = df_filtered_agents,
-                                                   randomize = FALSE)
-
-bandit_TS_position <- OfflineReplayEvaluatorBandit$new(formula = click ~ position,
-                                                   data = df_filtered_agents,
-                                                   randomize = FALSE)
-
-bandit_TS_combination <- OfflineReplayEvaluatorBandit$new(formula = click ~ combination_index,
-                                                   data = df_filtered_agents,
-                                                   randomize = FALSE)
-# Define the Thompson Sampling policy
-TS <- ThompsonSamplingPolicy$new(alpha = 1, beta = 90)
-
-# Create the agent for 80 arms
-agent_TS_item <- Agent$new(TS, bandit_TS_item)
-agent_TS_position <- Agent$new(TS, bandit_TS_position)
-agent_TS_combination <- Agent$new(TS, bandit_TS_combination)
-
-
-# Run the simulator for Thompson Sampling
-simulator_TS_item <- Simulator$new(agent_TS_item, 
-                              horizon = size_sim, 
-                              simulations = n_sim)
-history_TS_item<- simulator_TS_item$run()
-
-simulator_TS_position <- Simulator$new(agent_TS_position, 
-                              horizon = size_sim, 
-                              simulations = n_sim)
-history_TS_position<- simulator_TS_position$run()
-
-simulator_TS_combination <- Simulator$new(agent_TS_combination, 
-                              horizon = size_sim, 
-                              simulations = n_sim)
-history_TS_combination <- simulator_TS_combination$run()
-
-
-# Gather results for Thompson Sampling
-df_history_item <- history_TS_item$data %>%
-  select(t, sim, item = choice, reward, agent) 
-
-df_history_position <- history_TS_position$data %>%
-  select(t, sim, position = choice, reward, agent) 
-
-df_history_combination <- history_TS_combination$data %>%
-  select(t, sim, combination=choice, reward, agent) 
-
-# Step 8: Calculate cumulative rewards for each simulation
-df_cumulative_item <- df_history_item %>%
-  group_by(sim) %>%
-  mutate(cumulative_reward = cumsum(reward)) %>%
-  ungroup()
-
-df_cumulative_position <- df_history_position %>%
-  group_by(sim) %>%
-  mutate(cumulative_reward = cumsum(reward)) %>%
-  ungroup()
-
-df_cumulative_combination <- df_history_combination %>%
-  group_by(sim) %>%
-  mutate(cumulative_reward = cumsum(reward)) %>%
-  ungroup()
-
-
-# Step 9: Calculate average cumulative rewards by position for item 9
-avg_reward_by_item <- df_cumulative_item%>%
-  group_by(item) %>%
-  summarise(avg_cumulative_reward = mean(cumulative_reward, na.rm = TRUE),
-            .groups = 'drop') %>%
-  arrange(desc(avg_cumulative_reward))
-
-avg_reward_by_position <- df_cumulative_position%>%
-  group_by(position) %>%
-  summarise(avg_cumulative_reward = mean(cumulative_reward, na.rm = TRUE),
-            .groups = 'drop') %>%
-  arrange(desc(avg_cumulative_reward))
-
-avg_reward_by_combination <- df_cumulative_combination%>%
-  group_by(combination) %>%
-  summarise(avg_cumulative_reward = mean(cumulative_reward, na.rm = TRUE),
-            .groups = 'drop') %>%
-  arrange(desc(avg_cumulative_reward))
-
-
-# Step 10: Get the position with the highest average cumulative reward for item 9
-highest_avg_item <- avg_reward_by_item %>% 
-  slice(1)
-
-highest_avg_position <- avg_reward_by_position %>% 
-  slice(1)
-highest_avg_combo<- avg_reward_by_combination %>% 
-  slice(1)
-
-highest_avg_combination<- df_filtered_agents %>%
-  filter(combination_index == highest_avg_combo$combination) %>%
-  select(combinations) %>%
-  slice(1)
-
-# Output results
-cat("\nHighest Average Cumulative Reward by item:\n")
-print(highest_avg_item)
-cat("\nHighest Average Cumulative Reward by position:\n")
-print(highest_avg_position)
-cat("\nHighest Average Cumulative Reward by combination:\n")
-print(highest_avg_combination) 
-
-
-```
-
-
-#Best Position and Item according to TS
-This code implements Thompson Sampling with a batch size of 1, using alpha=1 and beta=60, which were found to be the best-performing parameters from previous analysis. The algorithm is designed to identify the best-performing arm in a multi-armed bandit problem based on cumulative successes over 10 simulations, each with 4442 rounds. For each round, the algorithm samples from a Beta distribution for each arm, selects the arm with the highest sampled value, and simulates a reward based on the true CTR of the chosen arm. Successes and failures for each arm are updated after every round, and the arm with the most cumulative successes across simulations is identified as the best.
-
-```{r}
-# Load necessary libraries
-library(dplyr)
-
-# Number of simulations
-n_simulations <- 10
-
-# Horizon (number of rounds per simulation)
-n_rounds <- 4442
-
-# Batch size set to 1
-batch_size <- 1
-
-# Store cumulative successes for each arm
-total_successes <- rep(0, length(unique(df_filtered_agents$combination_index)))
-
-# Thompson Sampling with multiple simulations for batch_size = 1
-for (sim in 1:n_simulations) {
-  
-  # Extract unique arms from the df_filtered_agents dataset
-  arms <- unique(df_filtered_agents$combination_index)
-  
-  # Number of unique arms
-  n_arms <- length(arms)
-  
-  # Initialize success and failure counts for each arm
-  successes <- rep(0, n_arms)
-  failures <- rep(0, n_arms)
-  
-  # Thompson Sampling algorithm for one simulation
-  for (round in 1:n_rounds) {
-    
-    # PREDICT: Sample from the Beta distribution for each arm (with alpha=1, beta=4)
-    beta_samples <- rbeta(n_arms, successes + 1, failures + 4)
-    
-    # ACT: Choose the arm with the highest sampled value
-    chosen_arm_index <- which.max(beta_samples)
-    chosen_arm <- arms[chosen_arm_index]
-    
-    # ENVIRONMENT: Simulate whether the chosen arm gives a click based on its true CTR
-    true_CTR <- true_CTRs %>% filter(combination_index == chosen_arm) %>% pull(true_CTR)
-    reward <- rbinom(1, 1, true_CTR)
-    
-    # Update successes and failures for the chosen arm
-    if (reward == 1) {
-      successes[chosen_arm_index] <- successes[chosen_arm_index] + 1
-    } else {
-      failures[chosen_arm_index] <- failures[chosen_arm_index] + 1
-    }
-  }
-  
-  # Accumulate the successes for all simulations
-  total_successes <- total_successes + successes
-}
-
-# Identify the arm with the most cumulative successes
-best_arm <- which.max(total_successes)
-cat("The best arm is:", arms[best_arm])
-
-
-```
-```{r}
-# Retrieve the row where combination_index is equal to 43
-combination_43 <- df_filtered_agents[df_filtered_agents$combination_index == 43, ]
-
-combination_43
-```
-
-
-
-#appendix
-```{r, parameter tuning}
-alphas <- c(1,1,1,1,1,1,1,1,1,1)
-betas <-  c(10,20,30,40,50,60,70,80,90,100)
-
-size_sim <- 4442
-n_sim <- 10        
-
-bandit_Zozo_20 <- OfflineReplayEvaluatorBandit$new(formula = click ~ item_id,
-                                                   data = df_filtered_agents,
-                                                   randomize = FALSE)
-results_list <- list()
-
-
-for (i in seq_along(alphas)) {
-  TS <- ThompsonSamplingPolicy$new(alpha = alphas[i], beta = betas[i])
-  agent_TS_zozo_20 <- Agent$new(TS, bandit_Zozo_20)
-  simulator_20 <- Simulator$new(agent_TS_zozo_20, 
-                              horizon = size_sim, 
-                              simulations = n_sim)
-
-  history_TS_zozo_20 <- simulator_20$run()
-  
-  results <- history_TS_zozo_20$data %>%
-    mutate(alpha = alphas[i], beta = betas[i])
-  results_list[[i]] <- results 
-}
-
-df_TS_zozo_20 <- bind_rows(results_list)
-df_TS_zozo_20 <- df_TS_zozo_20 %>%
-  mutate(alpha_beta = paste0("alpha=", alpha, "_beta=", beta))
-
-# Now group by alpha_beta and sim to calculate max_t
-df_TS_zozo_20_max_t <- df_TS_zozo_20 %>%
-  group_by(alpha_beta, sim) %>%
-  summarize(max_t = max(t)) 
-print(df_TS_zozo_20_max_t)
-
-x <- min(df_TS_zozo_20_max_t$max_t)
-max_obs <- x
-df_history_agg <- df_TS_zozo_20 %>%
-  group_by(alpha_beta, sim) %>%
-  mutate(cumulative_reward = cumsum(reward)) %>%  
-  group_by(alpha_beta, t) %>%
-  summarise(
-    avg_cumulative_reward = mean(cumulative_reward), 
-    se_cumulative_reward = sd(cumulative_reward, na.rm = TRUE) / sqrt(n()), 
-    .groups = 'drop'
-  ) %>%
-  mutate(
-    cumulative_reward_lower_CI = avg_cumulative_reward - 1.96 * se_cumulative_reward,
-    cumulative_reward_upper_CI = avg_cumulative_reward + 1.96 * se_cumulative_reward
-  ) %>%
-  filter(t <= max_obs)
-# Plot the average cumulative rewards over time for each alpha-beta pair
-ggplot(data = df_history_agg, aes(x = t, y = avg_cumulative_reward, color = alpha_beta)) +
-  geom_line(size = 1.5) +  # Line for average cumulative reward
-  labs(title = "Average Cumulative Rewards Over Time by Alpha-Beta Pairs", 
-       x = 'Time', 
-       y = 'Average Cumulative Reward', 
-       color = 'Alpha-Beta Pair') +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for better readability
-
-# Plot Average Cumulative Reward with 95% CI
-ggplot(data = df_history_agg, aes(x = t, y = avg_cumulative_reward, color = alpha_beta)) +
-  geom_line(size = 1.5) +  
-  geom_ribbon(aes(ymin = pmax(cumulative_reward_lower_CI, 0),  
-                  ymax = cumulative_reward_upper_CI, 
-                  fill = alpha_beta), alpha = 0.1) + 
-  labs(title = "Average Cumulative Rewards with 95% CI Over Time by Alpha-Beta Pairs", 
-       x = 'Time', 
-       y = 'Average Cumulative Reward', 
-       color = 'Alpha-Beta Pair', 
-       fill = 'Alpha-Beta Pair') +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-```
 
 #Batching with the contextual package 
-
-The remainder of our analysis will focus on the filtered dataset of agents (segments) who clicked on the banner at least once.
-```{r}
-#In order to perform the logit regression we had to tranform our click variable into a factor variable but now we want to make it go back to a numeric variable.
-df_filtered_agents <- df_filtered_agents %>%
-  mutate(click = as.factor(click),  # Convert 'click' to factor
-         click_numeric = as.numeric(levels(click))[click])  # Convert factor levels to numeric
-
-
-```
 
 In Thompson Sampling, parameters are updated based on observations, where each action (or arm) selection adjusts the model’s beliefs about the likelihood of success. We use the contextual package's save_interval parameter to specify how many observations are processed before updating these parameters.
 
 We chose the batch sizes (batch_sizes <- c(1, 5, 10, 20, 50)) to keep max_t sufficiently large for capturing meaningful patterns. Additionally, we set size_sim to 4442 to match the number of observations in our filtered dataset of agents who clicked on the banner at least once, ensuring the model processes the entire dataset in each simulation.
 
 ```{r}
-
-library(contextual)
-library(dplyr)
 
 # Set the seed for reproducibility
 set.seed(0)
@@ -1100,3 +875,86 @@ ggplot(df_cumulative_rewards, aes(x = t, y = avg_cumulative_reward, color = as.f
 The graph displays the average cumulative rewards with 95% confidence intervals for different batch sizes (1, 5, 10, 20, 50). Batch size 1 shows the highest average cumulative rewards, with a noticeable increase starting around time 30. In contrast, all other batch sizes (5, 10, 20, 50) have average cumulative rewards close to zero throughout the period. The wide confidence intervals for batch size 1 suggest higher variability in rewards.
 
 This aligns with our click count after applying the Thompson Sampling algorithm, which recorded 4 clicks for batch size 1, while all other batch sizes recorded 0 clicks. This confirms the graph's results, where only batch size 1 demonstrated a significant increase in cumulative rewards, while the others remained flat.
+
+#Parameter Tuning
+
+```{r, parameter tuning}
+set.seed(0)
+alphas <- c(1,1,1,1,1,1,1,1,1,1)
+betas <-  c(10,20,30,40,50,60,70,80,90,100)
+
+size_sim <- 4442
+n_sim <- 10        
+
+bandit_Zozo_20 <- OfflineReplayEvaluatorBandit$new(formula = click ~ combination_index,
+                                                   data = df_filtered_agents,
+                                                   randomize = FALSE)
+results_list <- list()
+
+
+for (i in seq_along(alphas)) {
+  TS <- ThompsonSamplingPolicy$new(alpha = alphas[i], beta = betas[i])
+  agent_TS_zozo_20 <- Agent$new(TS, bandit_Zozo_20)
+  simulator_20 <- Simulator$new(agent_TS_zozo_20, 
+                              horizon = size_sim, 
+                              simulations = n_sim)
+
+  history_TS_zozo_20 <- simulator_20$run()
+  
+  results <- history_TS_zozo_20$data %>%
+    mutate(alpha = alphas[i], beta = betas[i])
+  results_list[[i]] <- results 
+}
+
+df_TS_zozo_20 <- bind_rows(results_list)
+df_TS_zozo_20 <- df_TS_zozo_20 %>%
+  mutate(alpha_beta = paste0("alpha=", alpha, "_beta=", beta))
+
+# Now group by alpha_beta and sim to calculate max_t
+df_TS_zozo_20_max_t <- df_TS_zozo_20 %>%
+  group_by(alpha_beta, sim) %>%
+  summarize(max_t = max(t)) 
+print(df_TS_zozo_20_max_t)
+
+x <- min(df_TS_zozo_20_max_t$max_t)
+max_obs <- x
+df_history_agg <- df_TS_zozo_20 %>%
+  group_by(alpha_beta, sim) %>%
+  mutate(cumulative_reward = cumsum(reward)) %>%  
+  group_by(alpha_beta, t) %>%
+  summarise(
+    avg_cumulative_reward = mean(cumulative_reward), 
+    se_cumulative_reward = sd(cumulative_reward, na.rm = TRUE) / sqrt(n_sim), 
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    cumulative_reward_lower_CI = avg_cumulative_reward - 1.96 * se_cumulative_reward,
+    cumulative_reward_upper_CI = avg_cumulative_reward + 1.96 * se_cumulative_reward
+  ) %>%
+  filter(t <= max_obs)
+# Plot the average cumulative rewards over time for each alpha-beta pair
+ggplot(data = df_history_agg, aes(x = t, y = avg_cumulative_reward, color = alpha_beta)) +
+  geom_line(size = 1.5) +  # Line for average cumulative reward
+  labs(title = "Average Cumulative Rewards Over Time by Alpha-Beta Pairs", 
+       x = 'Time', 
+       y = 'Average Cumulative Reward', 
+       color = 'Alpha-Beta Pair') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for better readability
+
+# Plot Average Cumulative Reward with 95% CI
+ggplot(data = df_history_agg, aes(x = t, y = avg_cumulative_reward, color = alpha_beta)) +
+  geom_line(size = 1.5) +  
+  geom_ribbon(aes(ymin = pmax(cumulative_reward_lower_CI, 0),  
+                  ymax = cumulative_reward_upper_CI, 
+                  fill = alpha_beta), alpha = 0.1) + 
+  labs(title = "Average Cumulative Rewards with 95% CI Over Time by Alpha-Beta Pairs", 
+       x = 'Time', 
+       y = 'Average Cumulative Reward', 
+       color = 'Alpha-Beta Pair', 
+       fill = 'Alpha-Beta Pair') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+In this graph, the confidence intervals for the different pairs overlap, which indicates that the observed differences between them may not be statistically significant. This overlap is largely a result of the limited sample size in our dataset. When the dataset is small, variability tends to increase, making it more difficult to detect meaningful distinctions between groups. As a result, the confidence intervals widen, and it becomes harder to confidently assert that any observed differences are not due to random chance.
+
