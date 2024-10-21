@@ -21,7 +21,7 @@ structure their websites to encourage shopping behavior. These problems
 involve a trade-off between exploration and exploitation (Lai & Robbins,
 1985; Auer et al., 2002). This trade-off is typically formulated as the
 multi-armed bandit problem, where each possible action, or arm, has an
-unknown reward probability distribution, and the agent aims to maximize
+unknown reward probability distribution and the agent aims to maximize
 cumulative rewards over time by selecting the optimal arm (Bouneffouf &
 Rish, 2019).
 
@@ -178,26 +178,26 @@ ggplot(click_heatmap_data, aes(x = factor(item_id), y = factor(position), fill =
 # V Key Assumptions
 
 For the context of this analysis, each operation was computed with the
-Set.Seed(123). This given that the parameters were adapted instead of
-the seed. This ensure that the data can be replicated and is consistent
+Set.Seed(123). This is given that the parameters were adapted instead of
+the seed. This ensures that the data can be replicated and is consistent
 across "random" simulations.
 
 It is assumed that each combination of four features is a unique agent.
-Given that the nature of these features is unkown, it is possible that
+Given that the nature of these features is unknown, it is possible that
 multiple agents share the same unique features. For example, a tagged
 Agent 106 has four unique features. In reality, two people can have the
-same unique features depending on its nature. In the analysis, both
-would fall under Agent 106. This decision was made given the uncertainty
-of these features, and hence understands that more specific features
+same unique features depending on their nature. In the analysis, both
+would fall under Agent 106. Given the uncertainty
+of these features, this decision was made, and hence understanding that more specific features
 lead to a more realistic unique agent identification.
 
 # VI Data Aggregation and Heterogeneity
 
-## DH1.1 Heterogeniety and Aggregation
+## DH1.1 Heterogeneity and Aggregation
 
-As per how it was addressed at the Overview of Methodology, the analysis
-will follow to stages. One in which it is assumed that each datapoint is
-an individual user (Un-aggregated) and another in which the interaction
+As per how it was addressed in the Overview of Methodology, the analysis
+will follow to stages. One in which it is assumed that each data point is
+an individual user (Unaggregated) and another in which the interaction
 with the website is grouped by the activity of unique users. In the
 dataset, each user (agent) has a combination of four unique tags which
 will be used to identify unique agents. The identification of the unique
@@ -233,9 +233,9 @@ The results are represented by the table below:
 | User_feature_3 | 8             |
 
 : The dataset includes a matrix combination of all of these features,
-providing a multiplicity amount of unique agent. Each agent has a unique
+providing a multiplicity amount of unique agents. Each agent has a unique
 combination of these four unique features. Hence, the reproduction of
-all possible agents are given by the following code:
+all possible agents is given by the following code:
 
 ```{r}
 set.seed(123)
@@ -269,14 +269,14 @@ website. This means that the total amount of samples in the dataset,
 **10,000**, are produced by the behavior of these 1728 unique agents.
 
 However, not all of the agents interact the same. Some agents interact
-multiple times with the add, yet they never click. Other agents click
+multiple times with the ad, yet they never click. Other agents click
 multiple times. For the context and simplicity of this analysis, there
 will be a clear distinction between the "Active" agents (Those who have
-clicked at least once) and the "Passive" agents (Those who not clicked).
-The analysis will be focused towards the "Active Agents". It will
+clicked at least once) and the "Passive" agents (Those who have not clicked).
+The analysis will be focused on the "Active Agents". It will
 suggest an item and position to users who the algorithm has feedback to
-learn from. These is identified with the code below, where the code
-filters out those agents who only access, yet never click the adds, the
+learn from. This is identified with the code below, where the code
+filters out those agents who only access, yet never click the ads, the
 "Passive Agents" and keeps the "Active Agents" who click on the add at
 least one time.
 
@@ -332,20 +332,20 @@ The aforementioned results exemplify two things. The initial dataset is
 reduced to **4442** samples which represent the interactions of
 meaningful costumers. Additionally, it identifies that from the **1728**
 agents who accessed the website, only **8** agents actually interacted
-with the page in a meaningful way. This are the potential costumers that
-the MAB should target in a way that it suggests the right add and
+with the page in a meaningful way. These are the potential customers that
+the MAB should target in a way that suggests the right ad and
 position for them.
 
 The behavior of each agent can be modelled based on their *exploration*
 and *exploitation.* The amount of rows each agent has is a
 representation of the length of their "game" or search. The amount of
-clicks within those rows, represent the degree to which the agent was
+clicks within those rows represent the degree to which the agent was
 able to *exploit* their choice and obtain a reward (click).
 
 The behavior of each of the **8 agents** was summarized by the
 relationship between the length of their game (rows) and the amount of
 clicks (Rewards)*.* The total result of their behavior within the data
-set is summarised with the table below:
+set is summarised in the table below:
 
 ```{r}
 set.seed(123)
@@ -371,7 +371,7 @@ kable(agent_stats, caption = "Agent Ranking by Rows (Exploration) and Total Clic
 From the aforementioned table it can be seen how **Agent 486** has the
 largest exploration and exploitation value. However, the other 7 agents
 also are potential customers of ZOZO as they have shown their interest
-by clicking. The three methods of MAB's for the model, will suggest the
+by clicking. The three methods of MAB's for the model will suggest the
 best item, position, and combination for each of these potential
 customers.
 
@@ -381,9 +381,9 @@ customers.
 
 ### E1.1 Epsilon-Greedy Algorithm: Notation
 
-In this part, when implementing the epsilon-greedy algorithm to choose
-the best performing arm(item_id) from our dataset. The arm that is
-chosen is 11, proving that histogram 2 ("Click rate per item") alligns
+In this part, when implementing the epsilon-greedy algorithm choose
+the best-performing arm(item_id) from our dataset. The arm that is
+chosen is 11, proving that histogram 2 ("Click rate per item") aligns
 with the Epsilon Greedy algorithm.
 
 ```{r, epsilon greedy notation}
@@ -417,9 +417,9 @@ print(paste0('The chosen item_id/arm is: ', chosen_arm_practice))
 
 ```
 
-### E1.2 Simulation Greedy: Simulates perfomance of an epsilon-greedy policy
+### E1.2 Simulation Greedy: Simulates performance of an epsilon-greedy policy
 
-#### Part 1: create two dataframes, one with data before start of policy, and one with data after
+#### Part 1: create two dataframes, one with data before the start of the policy, and one with data after
 
 ```{r,epsilon-greedy policy }
 set.seed(123)
@@ -494,12 +494,12 @@ set.seed(123)
 
 ### E1.3 Parameters - Raw Data
 
-The parameters for Epsilon-Greedy analysis are: Fisrtly, n_before_sim
-indicates the number of observations before the starting of
-epsalon-greedy policy, we choose 300, while n_sim is times to simulate,
+The parameters for Epsilon-Greedy analysis are: first, n_before_sim
+indicates the number of observations before the start of
+epsilon-greedy policy, we choose 300, while n_sim is timed to simulate,
 we choose 4000.
 
-```{r, parameters epsalon greedy}
+```{r, parameters epsilon greedy}
 set.seed(123)
 
 n_before_sim <- 300
@@ -515,7 +515,7 @@ epsilon exploration values of 0.05 until 0.45 by 0.05. When comparing
 the different results, it can be concluded which Epsilon value has the
 best performance and leads to the highest CTR (reward).
 
-```{r, results for diffrent epsalons on full data}
+```{r, results for diffrent epsilons on full data}
 set.seed(123)
 
 ZOZO_for_sim <- df 
@@ -634,8 +634,8 @@ over time.
 
 ### E1.5 Epsilon Performance - Raw Data
 
-Based on the graph presented below,at time step 4000, epsilon value 0.1
-reaches the highest average reward follow by 0.15, 0.25 and 0.4.
+Based on the graph presented below, at time step 4000, epsilon value 0.1
+reaches the highest average reward followed by 0.15, 0.25 and 0.4.
 
 ```{r, epsalons on full data}
 set.seed(123)
@@ -654,10 +654,10 @@ ggplot(df_all_eps, aes(x = t, y = avg_reward, color = factor(epsilon), group = f
   theme(legend.position = "bottom")
 ```
 
-The following code rerpresentes a separate histogram with its confidence
+The following code presents a separate histogram with its confidence
 interval for the best 4 performed Epsilons.
 
-```{r, confidence interval epasolns full data}
+```{r, confidence interval epsilons full data}
 set.seed(123)
 
 df_all_eps <- rbind( df_eps_10, df_eps_15, df_eps_25, df_eps_40)
@@ -678,8 +678,8 @@ ggplot(df_all_eps, aes(x = t, y = avg_reward, color = factor(epsilon), group = f
 ```
 
 In order to check if the results are statistically significant, an ANOVA
-test was computed. This shows if there is any significant differences
-between the average rewards of four best performed epsilons values.
+test was computed. This shows if there are any significant differences
+between the average rewards of four best-performed epsilons values.
 
 Based on the results, we can conclude that at 5 % significance level,
 there are statistically significant differences in average rewards.
@@ -740,9 +740,9 @@ print(paste0('The chosen item_id/arm is: ', chosen_arm_practice))
 
 ```
 
-### E2.2 Simulation Greedy: Simulates perfomance of an epsilon-greedy policy on aggregated data
+### E2.2 Simulation Greedy: Simulates performance of an epsilon-greedy policy on aggregated data
 
-#### Part 1: create two dataframes, one with data before start of policy, and one with data after
+#### Part 1: create two dataframes, one with data before the start of the policy, and one with data after
 
 ```{r, aggregated data epsilon}
 set.seed(123)
@@ -764,7 +764,7 @@ sim_greedy <- function(df, n_before_sim, n_sim, epsilon, interval=1){
   
   df_during_policy <- df[-index_before_sim,]
   
-  # dataframe where the results of storing the policy are stored
+  # dataframe where the results of the policy are stored
   df_results_policy <- data.frame(matrix(NA, nrow = n_sim, ncol = 2))
   colnames(df_results_policy) <- c('item_id', 'click')
 }
@@ -789,7 +789,7 @@ set.seed(123)
       chosen_arm <- current_arm
     }
 
-    #Select from the data for experiment the arm chosen
+    #Select from the data for the experiment the arm chosen
     df_during_policy_arm <- df_during_policy %>%
       filter(item_id == chosen_arm)
     
@@ -820,7 +820,7 @@ set.seed(123)
 
 ### E2.3 Parameters - Aggregated Data
 
-The parameter from E1.3 were held constant.
+The parameters from E1.3 were held constant.
 
 ```{r, parameters}
 set.seed(123)
@@ -836,7 +836,7 @@ set.seed(0)
 The Epsilon Analysis was performed with exploration values of 0.05 until
 0.45 by 0.05 and on the aggregated data.
 
-```{r, results for diffrent epsalons with aggregated data}
+```{r, results for different epsilons with aggregated data}
 set.seed(123)
 
 result_sim_agg_eps_5 <- sim_greedy(ZOZO_for_sim_aggregate,
@@ -896,7 +896,7 @@ Then, the cumulative average rewards were computed for the Epsilon
 values chosen. This part of the code is a crucial step in evaluating the
 Epsilon value performance.
 
-```{R, cumulative average rewrad calculation on aggregated data}
+```{R, cumulative average reward calculation on aggregated data}
 set.seed(123)
 
 # Calculate cumulative average reward for epsilon = 0.05
@@ -948,12 +948,12 @@ df_eps_45_agg <- data.frame(t = 1:n_sim, epsilon = 0.45, avg_reward = average_re
 
 ### E2.5 Epsilon Performance - Aggregated Data 
 
-Finally, the graph provides the analsis of the performance of the
+Finally, the graph provides the analysis of the performance of the
 epsilons and compare them based on aggregated data. The average reward
 over time was chosen as the metric to compare the performance across
 different values of the Epsilon. The results are found below:
 
-```{r, visualisation on aggregated data}
+```{r, visualization on aggregated data}
 set.seed(123)
 
 # Combine all data frames into one
@@ -963,7 +963,7 @@ ggplot(df_all_eps, aes(x = t, y = avg_reward, color = factor(epsilon), group = f
   geom_line(size = 1) +
   scale_color_manual(values = c("black","purple","#2ca02c", "red", "pink","orange", "blue","yellow","brown")) +
   scale_x_continuous(breaks = seq(0, 5000, by = 500)) +
-  labs(title = "Average Reward Over Time for Different Epsilon-Greedy Policies with Agrregated Data",
+  labs(title = "Average Reward Over Time for Different Epsilon-Greedy Policies with Aggregated Data",
        x = "Time Steps",
        y = "Average Reward",
        color = "Epsilon Value") +
@@ -971,8 +971,8 @@ ggplot(df_all_eps, aes(x = t, y = avg_reward, color = factor(epsilon), group = f
   theme(legend.position = "bottom")
 ```
 
-Based on the graph presented above ,at time step 4000, epsilon value 0.4
-reaches the highest average reward follow by 0.2, 0.25 and 0.35.
+Based on the graph presented above, at time step 4000, the epsilon value 0.4
+reaches the highest average reward followed by 0.2, 0.25 and 0.35.
 
 ### E2.6 Optimal Item 
 
@@ -1009,7 +1009,7 @@ epsilon_greedy <- function(epsilon, rewards, trials, n_items) {
 
 #Simulate epsilon-greedy for each user-item interaction
 n_rounds <- 1000
-epsilon <- 0.4 #this is the best performed epsilon) 
+epsilon <- 0.4 #this is the best-performed epsilon) 
 
 for (t in 1:n_rounds) {
   for (user in 1:n_users) {
@@ -1039,7 +1039,7 @@ results <- data.frame(
 print(results)
 ```
 
-The interpretation of the table above suggest that different users have
+The interpretation of the table above suggests that different users have
 different preferences for best item based on Epsilon Greedy analysis.
 
 ### **E2.7 Optimal Position** 
@@ -1096,7 +1096,7 @@ print(results)
 
 ```
 
-The table above present the best position for each agent. Overall, we
+The table above presents the best position for each agent. Overall, we
 can see that the position 2 is the most common one (similarly to the
 distribution per position histogram).
 
@@ -1163,8 +1163,8 @@ print(results)
 
 ## TS1 Identifying Optimal Initial Parameters
 
-Based on the summary of mean_click per arms, it can be concluded that
-there is much more failures than success since the mean_click values are
+Based on the summary of mean_click per arm, it can be concluded that
+there are many more failures than successes since the mean_click values are
 close to zero. These parameters represent the prior belief about the
 success rate, where $\alpha$ represents the number of observed successes
 and $\beta$ represents the number of observed failures. A higher initial
@@ -1174,8 +1174,8 @@ explored, from (1,10) for alpha and (1,100) for beta.
 
 After comparing the result with various different pairs of alphas and
 betas, the best pair of alphas and betas were chosen to be (2,70),
-(1,90) and (3,90) for this dataset. We will use this for the further
-analysis. The result of the other pairs can be found in the appendix.
+(1,90) and (3,90) for this dataset. We will use this for further
+analysis. The results of the other pairs can be found in the appendix.
 
 ```{r, TS parameter tuning}
 set.seed(123)
@@ -1666,7 +1666,7 @@ ggplot(results_df, aes(x = time, y = avg_cum_rewards)) +
 
 However, it is unrealistic to think that there is only one agent (C=0.1)
 accessing the website. This is why it is important to compute the UCB
-Algorithm analysis different policies and assess which one performs
+The algorithm analyzes different policies and assesses which one performs
 better over time.
 
 ### U2.1 Code for Agents
@@ -1776,21 +1776,21 @@ ggplot(combined_results, aes(x = time, y = mean_cum_reward, color = agent)) +
 
 The results conclude that the Agent (C=0.5) seems to be the most
 reactive customer to the costume advertisements they are shown.
-Additionally, the UCB classifier varies in effectiveness along the
+Additionally, the UCB classifier varies in effectiveness among the
 agents. However, the degree of exploration was assigned to each agent.
 It performed the analysis assuming that each row is a different user.
-However, there can be the case in which the same user interacts with the
+However, there can be a case in which the same user interacts with the
 website multiple times.
 
 In reality, each agent (user) has common characteristics or unique user
-features which models their behavior. The dataset provided from ZOZO
+features which model their behavior. The dataset provided by ZOZO
 stores assigns each user a unique set of four different features. This
 is particularly important when addressing the fact that some users
 access or interact with the website multiple times. The analysis of the
 agents performed above is executed under the assumption that every row
 is a different user. Which is not the case. Hence, it is important to
-group the interaction by user, meaning aggregating the dataset by
-different agents, and be able to assume how many times did an agent
+group the interaction by the user, meaning aggregating the dataset by
+different agents and be able to assume how many times did an agent
 react or participated. This addresses the concept of Heterogeneity.
 
 ## U3 Results
@@ -1869,7 +1869,7 @@ print(results)
 ### U3.2 Optimal Position 
 
 Secondly, regardless of the item, it is important to understand which
-position is better for which Active Customer. This is seen with the
+position is better for active Customers. This is seen with the
 table below:
 
 ```{r}
@@ -1941,8 +1941,8 @@ print(results)
 
 In general, the analysis has identified which Item and which Position is
 better suggested for users. However, it disregards the possibility of a
-combination. Now each combiantion of item_id and position is regarded as
-a new arm. Hence, the program is ran with a 30-armed bandit (3
+combination. Now each combination of item_id and position is regarded as
+a new arm. Hence, the program is run with a 30-armed bandit (3
 [Position] x 20 [Item_ID]). The results are as follows:
 
 ```{r}
@@ -2177,7 +2177,7 @@ colnames(results_table) <- paste0("Batch_Size_", batch_sizes)
 # Step 6: Final results table
 print(results_table)
 
-# Step 7: Calculate variance of average rewards across batch sizes
+# Step 7: Calculate the variance of average rewards across batch sizes
 reward_variances <- apply(results_table[-1, ], 1, function(x) var(as.numeric(x)))
 
 # Display the variances
@@ -2188,15 +2188,15 @@ reward_variances
 ## A1.3 Comparison between Methods
 
 From the aforementioned table, it can be identified that Thompson
-Sampling seems to be the weakest method of the chosen three. This only
-within the context of batching. Batching is a determining element if the
+Sampling seems to be the weakest method of the chosen three. This is only
+within the context of batching. Batching is a determining element of the
 effectiveness of a model, given that it is associated with the
 processing costs of the algorithm. There are two other methods which can
-be furthered compared which are the Epsilon-Greedy, and the Upper
+be further compared which are the Epsilon-Greedy, and the Upper
 Confidence Bound.
 
 Epsilon-Greedy surpasses the UCB algorithm for average total rewards in
-every single batching. However, it has a more siginificant variance
+every single batching. However, it has a more significant variance
 (5.26) than the UCB counterpart (0.10). Hence, in situations where the
 precision of the model is important, depending on the chosen batching
 size, it is debatable which model is best.
@@ -2206,7 +2206,7 @@ size, it is debatable which model is best.
 Combining the methodology in Epsilon Greedy (Section VII) and UCB
 (Section IX), one can analyse the performance of each method. For each
 UCB Agent, there is an "Epsiloner Doppelganger", simulating the same
-degreee of *curiosity*. For example, UCB Agent (C=0.5) has an Epsiloner
+degree of *curiosity*. For example, UCB Agent (C=0.5) has an Epsiloner
 Dopperganger (E=0.5). They choose to model, in the same environment, the
 behavior of this doppelganger and observe which machine learning method
 yields the highest average cumulative frequency.
@@ -2374,26 +2374,26 @@ five chosen values (0.1, 0.25, 0.5, 0.75, 1) for each agent, it can be
 seen how for the first two agents the difference is significant. As the
 value increases the difference between the two methods becomes less
 significant. Given that there isn't a significant difference across
-methods, expect for the first two agents where UCB outperforms Epsilon,
+methods, except for the first two agents where UCB outperforms Epsilon,
 UCB can be considered an optimal method to train the model.
 
 # XI Overview of Methodology
 
 As discussed in the Introduction (Section I), the purpose of the
-analysis is to explore the differences accross three Machine Learning
+the analysis is to explore the differences across three Machine Learning
 methods for Multi-Armed Bandit Models, and identify which combination of
 position and item is an optimal suggestion to maximize the CTR of Zozo's
 website. Additionally, exploring how these results are sensitive to
 batch sizes, aggregation and parameters.
 
 Each method individually identified the Optimal Combination for item and
-position. The parameters chosen were the best performing parameters that
+position. The parameters chosen were the best-performing parameters that
 were identified in the sub-sections prior to deriving this conclusion.
 
 #### Epsilon-Greedy
 
 Within the context of Epsilon-Greedy, it was identified that the best
-performing Epsilon, measure by the average cumulative rewards accross
+performing Epsilon, measured by the average cumulative rewards across
 samples was the parameter with an Epsilon of (E=0.1). This Epsilon was
 used to compute the combination suggestion for the aggregated relevant
 agents in Optimal Combination (E2.8). Where, overall, the optimal
@@ -2403,7 +2403,7 @@ combination was **Position 2** and **Item 15.**
 
 The Thompson Sampling method identified in Identifying Optimal
 Parameters (Section TS1) that the optimal algorithm was that with the
-intial (Alpha = 2) and (Beta = 70). This given the low rate of clicks
+initial (Alpha = 2) and (Beta = 70). This is given the low rate of clicks
 amongst the dataset. This assumption used as a parameter to compute the
 Optimal Combination (TS3.3) where it can be concluded that across the 8
 relevant agents, the combination that maximizes the CTR is **Position
@@ -2413,18 +2413,18 @@ relevant agents, the combination that maximizes the CTR is **Position
 
 Within the context of the UCB, it is assumed that the C-value is agent
 dependent and overall the exploration value of (C= 0.5) represents the
-best performing agent. This parameter was used to run the Optimal
+best-performing agent. This parameter was used to run the Optimal
 Combination (U3.3) where it was identified that the best combination is
 **Position 2** and **Item 15.** Equivalent to what was computed by the
 Epsilon Greedy Algorithm.
 
 # XII Answering the Research Question
 
-The three methods aggree that the most common CTR maximizing position in
+The three methods agree that the most common CTR-maximizing position in
 2. Two of the methods agree that **Position 2** and **Item 15**
-represents the CTR maximizing combination with regards to their best
-perfoming parameters and the given aggregated dataset in which the 8
-potential active costumers clicked. Hence, this can be assumed to be the
+represents the CTR maximizing combination with regard to their best
+performing parameters and the given aggregated dataset in which the 8
+potential active customers clicked. Hence, this can be assumed to be the
 best item combination.
 
 With regards to the implementation of an algorithm for the Multi-Armed
@@ -2437,26 +2437,26 @@ discussed in Batch Sensitivity (A1.2). If the company is not willing to
 invest in an algorithm that updates so often, then certainly the Epsilon
 Greedy is an attractive option given that its assumption of which arm
 performs best is better identified with a larger sample size. Given that
-it can observe and indentify better which arm is to be exploited.
+it can observe and identify better which arm is to be exploited.
 
 When choosing between the two methods, if the company expects customers
-with low levels of exploration then UCB inheretedly outperforms the
+with low levels of exploration then UCB inherently outperforms the
 Epsilon as presented by the graphs in Analysis (Section X, A1.3.2).
 However, as the exploration degree increases the difference between
-models becomes insignificant.
+models become insignificant.
 
-The research purpose highlighted the analysis of the results and its
+The research purpose highlighted the analysis of the results and their
 sensitivity to different parameters, batch size, and aggregation. The
 analysis has proven the different scenarios of an optimal arm given an
 aggregated and raw dataset, with different parameters and batch size. It
-has concluded that the best combination to maximize the CTR, aggreed by
+has concluded that the best combination to maximize the CTR, agreed by
 Epsilon Greedy and UCB, is **Position 2** and **Item 15.** This
 combination will yield the highest amount of clicks if reached out by
 the agents.
 
 This is consistent with the data presented in the Descriptive Statistics
 (Section IV) where **Item 15** is amongst the top three performing items
-(D1.2) , and **Position 2** is the most common amogst the three (D1.3).
+(D1.2), and **Position 2** is the most common among the three (D1.3).
 
 # XII Future Analysis 
 
@@ -2468,8 +2468,8 @@ this is for the aggregated dataset and under the assumption of the
 Active Agent. For future analysis, the cosine similarity between these
 agents across its 4 unique components can be computed to identify the
 similarity between them. Additionally, given that each unique agent has
-an optimal agents, non-active users (Agents who didn't click at least
-once) can be suggested the optimal combination for the agent with the
+optimal agents, non-active users (Agents who didn't click at least
+once) can suggest the optimal combination for the agent with the
 closest cosine relation. This is a potential improvement for the model,
 that given the scope of the analysis, is only presented as a potential
 addition.
@@ -2479,21 +2479,21 @@ addition.
 The analysis was able to identify an optimal combination across
 different training methods. It was performed and reviewed separately and
 then the codes were combined in order to compare them adjusting the
-logic of progression. The analysis was primarily done without blackbox
+logic of progression. The analysis was primarily done without black box
 packages. This was the response to the feedback received in which the
 performance of the model could be hindered by the lack of flexibility
 the Contextual Package brings. This being said, choosing this approach
 increased the amount of mistakes resulting from simple naming functions.
 Additionally, the fact that the code was divided and written by
 different coders increased the amount of errors in the methodology when
-it was being computed in another device. Lastly, given the limited
+it was being computed on another device. Lastly, given the limited
 computing power, the medium-sized dataset was chosen which restricts the
 reliability of the results with its 80-armed counterpart.
 
 Initially, all the algorithms were designed to be computed with the same
 amount of simulations and size. However, each group member adjusted this
 in the way they considered best in order to obtain significant results.
-This is something that must be taken into account when assesing the
+This is something that must be taken into account when assessing the
 reliability of the analysis. Lastly, the "random" values chosen for the
 variables which allowed it from the coder's perspective are object to
 slight biases which limit the analysis to more specific results for
