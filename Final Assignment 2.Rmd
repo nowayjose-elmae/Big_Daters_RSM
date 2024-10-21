@@ -637,7 +637,7 @@ over time.
 Based on the graph presented below, at time step 4000, epsilon value 0.1
 reaches the highest average reward followed by 0.15, 0.25 and 0.4.
 
-```{r, epsalons on full data}
+```{r, epsilons on full data}
 set.seed(123)
 
 df_all_eps <- rbind(df_eps_5,df_eps_10,df_eps_15,df_eps_20, df_eps_25, df_eps_30,df_eps_35, df_eps_40, df_eps_45)
