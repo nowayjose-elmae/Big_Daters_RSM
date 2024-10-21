@@ -157,7 +157,7 @@ ggplot(clicks_per_position, aes(x = factor(position), y = click_count)) +
 
 ## D1.4 Clicks by Item ID (arms) and Position - Raw Data
 
-The final histogram/map shows the combination of Arms and Positions.
+The final histogram/map shows the combination of Arms and Positions. The best combination turns out to be arm 11 and position 3. 
 
 ```{r, combo map}
 set.seed(123)
