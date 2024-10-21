@@ -351,7 +351,7 @@ set is summarised in the table below:
 set.seed(123)
 
 # Step 1: Load the dataset
-agents_data <- read.csv("agents_data_encoded.csv", stringsAsFactors = FALSE)
+agents_data <- read.csv("sorted_agents_with_clicks.csv", stringsAsFactors = FALSE)
 
 # Step 2: Compute the sum of clicks and the row count per agent
 agent_stats <- agents_data %>%
